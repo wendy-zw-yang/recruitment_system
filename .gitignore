@@ -1,0 +1,52 @@
+# AI 工具
+.codex/
+
+# Java 编译产物
+target/
+build/
+out/
+*.class
+*.jar
+*.war
+*.ear
+hs_err_pid*
+
+# Maven
+.mvn/wrapper/maven-wrapper.jar
+
+# Gradle
+.gradle/
+!gradle/wrapper/gradle-wrapper.jar
+
+# IDE
+.idea/
+*.iml
+*.iws
+*.ipr
+.vscode/
+.project
+.classpath
+.settings/
+.factorypath
+nb-configuration.xml
+nbproject/
+
+# 日志 / 临时
+*.log
+*.bak
+*.tmp
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# 应用配置（含敏感信息）
+application-local.properties
+application-local.yml
+.env
+.env.local
