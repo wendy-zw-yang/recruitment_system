@@ -1,0 +1,18 @@
+@import './base.css';
+
+#app {
+  min-height: 100vh;
+}
+
+.page-shell {
+  width: min(1200px, calc(100% - 48px));
+  margin: 0 auto;
+  padding: 96px 0 64px;
+}
+
+@media (max-width: 720px) {
+  .page-shell {
+    width: calc(100% - 24px);
+    padding: 88px 0 48px;
+  }
+}

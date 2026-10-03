@@ -1,0 +1,117 @@
+:root {
+  --bg: #f4f8fd;
+  --bg-soft: #e8f0fb;
+  --bg-grad-from: #eaf3ff;
+  --bg-grad-to: #f6fbff;
+
+  --panel: rgba(255, 255, 255, 0.96);
+  --panel-strong: #ffffff;
+  --notice-panel: #eef4fc;
+
+  --line: rgba(28, 86, 175, 0.12);
+  --line-strong: rgba(28, 86, 175, 0.22);
+
+  --text: #1a2a44;
+  --text-soft: #5a6a85;
+  --text-muted: #8a98b0;
+
+  --primary: #1d6fd8;
+  --primary-deep: #0f4fb0;
+  --primary-soft: #dbe9fb;
+  --primary-focus: rgba(29, 111, 216, 0.5);
+  --primary-tint: rgba(29, 111, 216, 0.08);
+  --primary-tint-strong: rgba(29, 111, 216, 0.16);
+
+  --accent: #06b6d4;
+
+  --success: #16a34a;
+  --success-bg: #e7f6ed;
+  --success-text: #126c34;
+
+  --danger: #d94545;
+  --warning: #d68b1f;
+  --warning-bg: #fdf2dd;
+
+  --shadow: 0 18px 40px rgba(15, 79, 176, 0.08);
+  --shadow-soft: 0 12px 28px rgba(15, 79, 176, 0.06);
+  --shadow-button: 0 10px 22px rgba(15, 79, 176, 0.18);
+  --shadow-tab: 0 8px 22px rgba(15, 79, 176, 0.06);
+
+  --topbar-mask-start: rgba(244, 248, 253, 1);
+  --topbar-mask-middle: rgba(244, 248, 253, 0.95);
+  --topbar-mask-end: rgba(244, 248, 253, 0);
+  --topbar-panel: rgba(255, 255, 255, 0.86);
+  --tab-hover: rgba(29, 111, 216, 0.06);
+  --button-text: #ffffff;
+
+  --radius-xl: 24px;
+  --radius-lg: 16px;
+  --radius-md: 10px;
+  --radius-sm: 6px;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body,
+#app {
+  min-height: 100%;
+}
+
+body {
+  color: var(--text);
+  background:
+    radial-gradient(circle at top left, rgba(29, 111, 216, 0.08), transparent 35%),
+    radial-gradient(circle at bottom right, rgba(6, 182, 212, 0.06), transparent 40%),
+    linear-gradient(160deg, var(--bg-grad-from) 0%, var(--bg-grad-to) 100%);
+  background-attachment: fixed;
+  line-height: 1.6;
+  font-family:
+    -apple-system,
+    BlinkMacSystemFont,
+    'PingFang SC',
+    'Microsoft YaHei',
+    'Segoe UI',
+    Roboto,
+    Helvetica,
+    Arial,
+    sans-serif;
+  font-size: 15px;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+ul,
+ol {
+  list-style: none;
+}
+
+img {
+  display: block;
+  max-width: 100%;
+}
+
+::selection {
+  background: var(--primary-tint-strong);
+  color: var(--primary-deep);
+}

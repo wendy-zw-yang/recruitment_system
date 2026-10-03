@@ -50,3 +50,5 @@ application-local.properties
 application-local.yml
 .env
 .env.local
+opencode-handoff-*
+

@@ -22,10 +22,10 @@ CREATE DATABASE IF NOT EXISTS recruitment_system
 USE recruitment_system;
 
 -- ============================================================
--- 1. user（用户账号）
+-- 1. users（用户账号）
 -- ============================================================
-DROP TABLE IF EXISTS `user`;
-CREATE TABLE `user` (
+DROP TABLE IF EXISTS `users`;
+CREATE TABLE `users` (
     `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键',
     `email` VARCHAR(255) NOT NULL COMMENT '登录邮箱（唯一）',
     `password_hash` VARCHAR(255) NOT NULL COMMENT 'BCrypt 密码哈希',
@@ -116,7 +116,7 @@ CREATE TABLE `email_code` (
 DROP TABLE IF EXISTS `candidate_profile`;
 CREATE TABLE `candidate_profile` (
     `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键',
-    `user_id` BIGINT NOT NULL COMMENT '关联 user.id（CANDIDATE）',
+    `user_id` BIGINT NOT NULL COMMENT '关联 users.id（CANDIDATE）',
     `expected_position` VARCHAR(128) NULL COMMENT '期望职位（自由输入）',
     `expected_industry_id` BIGINT NULL COMMENT '期望行业',
     `expected_city_id` BIGINT NULL COMMENT '期望城市',
@@ -126,7 +126,7 @@ CREATE TABLE `candidate_profile` (
     PRIMARY KEY (`id`),
     UNIQUE KEY `uk_candidate_profile_user` (`user_id`),
     KEY `idx_candidate_profile_user` (`user_id`),
-    CONSTRAINT `fk_candidate_profile_user` FOREIGN KEY (`user_id`) REFERENCES `user` (`id`),
+    CONSTRAINT `fk_candidate_profile_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`),
     CONSTRAINT `fk_candidate_profile_industry` FOREIGN KEY (`expected_industry_id`) REFERENCES `dict_industry` (`id`),
     CONSTRAINT `fk_candidate_profile_city` FOREIGN KEY (`expected_city_id`) REFERENCES `dict_city` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='求职者扩展资料（含求职偏好）';
@@ -137,7 +137,7 @@ CREATE TABLE `candidate_profile` (
 DROP TABLE IF EXISTS `company`;
 CREATE TABLE `company` (
     `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键',
-    `hr_user_id` BIGINT NOT NULL COMMENT '关联 user.id（HR），一个 HR 一个公司',
+    `hr_user_id` BIGINT NOT NULL COMMENT '关联 users.id（HR），一个 HR 一个公司',
     `name` VARCHAR(255) NOT NULL COMMENT '公司名',
     `industry_id` BIGINT NULL COMMENT '行业',
     `scale` VARCHAR(64) NULL COMMENT '规模',
@@ -145,7 +145,7 @@ CREATE TABLE `company` (
     `auth_status` VARCHAR(32) NOT NULL DEFAULT 'PENDING' COMMENT 'PENDING / VERIFIED / REJECTED',
     `auth_note` VARCHAR(512) NULL COMMENT '拒绝理由',
     `verified_at` DATETIME NULL COMMENT '审核通过时间',
-    `verified_by` BIGINT NULL COMMENT '审核管理员 user.id',
+    `verified_by` BIGINT NULL COMMENT '审核管理员 users.id',
     `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     `is_deleted` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '逻辑删除：0 未删 / 1 已删',
@@ -155,9 +155,9 @@ CREATE TABLE `company` (
     KEY `idx_company_auth_status` (`auth_status`),
     KEY `idx_company_industry` (`industry_id`),
     KEY `idx_company_verified_by` (`verified_by`),
-    CONSTRAINT `fk_company_hr` FOREIGN KEY (`hr_user_id`) REFERENCES `user` (`id`),
+    CONSTRAINT `fk_company_hr` FOREIGN KEY (`hr_user_id`) REFERENCES `users` (`id`),
     CONSTRAINT `fk_company_industry` FOREIGN KEY (`industry_id`) REFERENCES `dict_industry` (`id`),
-    CONSTRAINT `fk_company_verified_by` FOREIGN KEY (`verified_by`) REFERENCES `user` (`id`)
+    CONSTRAINT `fk_company_verified_by` FOREIGN KEY (`verified_by`) REFERENCES `users` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='HR 所属公司（异步审核）';
 
 -- ============================================================
@@ -166,7 +166,7 @@ CREATE TABLE `company` (
 DROP TABLE IF EXISTS `job`;
 CREATE TABLE `job` (
     `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键',
-    `hr_user_id` BIGINT NOT NULL COMMENT '关联 user.id（HR）',
+    `hr_user_id` BIGINT NOT NULL COMMENT '关联 users.id（HR）',
     `company_id` BIGINT NOT NULL COMMENT '关联 company.id',
     `title` VARCHAR(255) NOT NULL COMMENT '职位标题',
     `industry_id` BIGINT NULL COMMENT '行业',
@@ -175,6 +175,7 @@ CREATE TABLE `job` (
     `salary_max` INT NULL COMMENT '薪资上限（元/月）',
     `description` TEXT NOT NULL COMMENT 'JD 岗位职责',
     `requirements` TEXT NOT NULL COMMENT 'JD 任职要求',
+    `keywords` VARCHAR(255) NULL COMMENT '关键词（逗号分隔，AI 润色输出）',
     `status` VARCHAR(32) NOT NULL DEFAULT 'DRAFT' COMMENT 'DRAFT / ONLINE / OFFLINE / DELETED',
     `audit_status` VARCHAR(32) NOT NULL DEFAULT 'PENDING' COMMENT 'PENDING / APPROVED / REJECTED',
     `audit_note` VARCHAR(512) NULL COMMENT '审核驳回理由',
@@ -188,7 +189,7 @@ CREATE TABLE `job` (
     KEY `idx_job_company` (`company_id`),
     KEY `idx_job_industry` (`industry_id`),
     KEY `idx_job_city` (`city_id`),
-    CONSTRAINT `fk_job_hr` FOREIGN KEY (`hr_user_id`) REFERENCES `user` (`id`),
+    CONSTRAINT `fk_job_hr` FOREIGN KEY (`hr_user_id`) REFERENCES `users` (`id`),
     CONSTRAINT `fk_job_company` FOREIGN KEY (`company_id`) REFERENCES `company` (`id`),
     CONSTRAINT `fk_job_industry` FOREIGN KEY (`industry_id`) REFERENCES `dict_industry` (`id`),
     CONSTRAINT `fk_job_city` FOREIGN KEY (`city_id`) REFERENCES `dict_city` (`id`)
@@ -200,7 +201,7 @@ CREATE TABLE `job` (
 DROP TABLE IF EXISTS `resume`;
 CREATE TABLE `resume` (
     `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键',
-    `candidate_id` BIGINT NOT NULL COMMENT '关联 user.id（CANDIDATE）',
+    `candidate_id` BIGINT NOT NULL COMMENT '关联 users.id（CANDIDATE）',
     `basic_name` VARCHAR(64) NULL COMMENT '真实姓名（简历基本信息）',
     `basic_phone` VARCHAR(32) NULL COMMENT '电话',
     `basic_email` VARCHAR(255) NULL COMMENT '邮箱',
@@ -216,7 +217,7 @@ CREATE TABLE `resume` (
     PRIMARY KEY (`id`),
     KEY `idx_resume_candidate_archived` (`candidate_id`, `is_archived`),
     KEY `idx_resume_candidate` (`candidate_id`),
-    CONSTRAINT `fk_resume_candidate` FOREIGN KEY (`candidate_id`) REFERENCES `user` (`id`)
+    CONSTRAINT `fk_resume_candidate` FOREIGN KEY (`candidate_id`) REFERENCES `users` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='简历主体；单一 ACTIVE 由应用层强制';
 
 -- ============================================================
@@ -245,7 +246,7 @@ CREATE TABLE `resume_attachment` (
 DROP TABLE IF EXISTS `application`;
 CREATE TABLE `application` (
     `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键',
-    `candidate_id` BIGINT NOT NULL COMMENT '关联 user.id（CANDIDATE）',
+    `candidate_id` BIGINT NOT NULL COMMENT '关联 users.id（CANDIDATE）',
     `job_id` BIGINT NOT NULL COMMENT '关联 job.id',
     `resume_snapshot_id` BIGINT NOT NULL COMMENT '投递时的 ACTIVE 简历快照 id',
     `status` VARCHAR(32) NOT NULL DEFAULT 'PENDING_REVIEW' COMMENT 'PENDING_REVIEW / VIEWED_BY_HR / RESUME_PASSED / INTERVIEWING / OFFERED / HIRED / REJECTED / WITHDRAWN',
@@ -260,7 +261,7 @@ CREATE TABLE `application` (
     KEY `idx_app_job_status` (`job_id`, `status`, `is_deleted`),
     KEY `idx_app_candidate_status` (`candidate_id`, `status`, `is_deleted`),
     KEY `idx_app_resume_snapshot` (`resume_snapshot_id`),
-    CONSTRAINT `fk_app_candidate` FOREIGN KEY (`candidate_id`) REFERENCES `user` (`id`),
+    CONSTRAINT `fk_app_candidate` FOREIGN KEY (`candidate_id`) REFERENCES `users` (`id`),
     CONSTRAINT `fk_app_job` FOREIGN KEY (`job_id`) REFERENCES `job` (`id`),
     CONSTRAINT `fk_app_resume` FOREIGN KEY (`resume_snapshot_id`) REFERENCES `resume` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='投递记录；ai_score NULL 表示待评分';
@@ -274,7 +275,7 @@ CREATE TABLE `application_status_history` (
     `application_id` BIGINT NOT NULL COMMENT '关联 application.id',
     `from_status` VARCHAR(32) NULL COMMENT '原状态（NULL=初次创建）',
     `to_status` VARCHAR(32) NOT NULL COMMENT '目标状态',
-    `changed_by` BIGINT NOT NULL COMMENT '变更人 user.id',
+    `changed_by` BIGINT NOT NULL COMMENT '变更人 users.id',
     `note` VARCHAR(512) NULL COMMENT '备注（如驳回理由）',
     `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
@@ -283,7 +284,7 @@ CREATE TABLE `application_status_history` (
     KEY `idx_hist_app_changed` (`application_id`, `created_at`),
     KEY `idx_hist_changed_by` (`changed_by`),
     CONSTRAINT `fk_hist_app` FOREIGN KEY (`application_id`) REFERENCES `application` (`id`),
-    CONSTRAINT `fk_hist_user` FOREIGN KEY (`changed_by`) REFERENCES `user` (`id`)
+    CONSTRAINT `fk_hist_user` FOREIGN KEY (`changed_by`) REFERENCES `users` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='状态时间线';
 
 -- ============================================================
@@ -293,7 +294,7 @@ DROP TABLE IF EXISTS `application_note`;
 CREATE TABLE `application_note` (
     `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键',
     `application_id` BIGINT NOT NULL COMMENT '关联 application.id',
-    `hr_user_id` BIGINT NOT NULL COMMENT 'HR user.id',
+    `hr_user_id` BIGINT NOT NULL COMMENT 'HR users.id',
     `content` TEXT NOT NULL COMMENT '备注内容',
     `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
@@ -302,7 +303,7 @@ CREATE TABLE `application_note` (
     KEY `idx_note_app` (`application_id`),
     KEY `idx_note_hr` (`hr_user_id`),
     CONSTRAINT `fk_note_app` FOREIGN KEY (`application_id`) REFERENCES `application` (`id`),
-    CONSTRAINT `fk_note_hr` FOREIGN KEY (`hr_user_id`) REFERENCES `user` (`id`)
+    CONSTRAINT `fk_note_hr` FOREIGN KEY (`hr_user_id`) REFERENCES `users` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='HR 内部备注（仅 HR 自己可见）';
 
 -- ============================================================
@@ -311,7 +312,7 @@ CREATE TABLE `application_note` (
 DROP TABLE IF EXISTS `favorite_job`;
 CREATE TABLE `favorite_job` (
     `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键',
-    `candidate_id` BIGINT NOT NULL COMMENT '关联 user.id（CANDIDATE）',
+    `candidate_id` BIGINT NOT NULL COMMENT '关联 users.id（CANDIDATE）',
     `job_id` BIGINT NOT NULL COMMENT '关联 job.id',
     `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
@@ -320,7 +321,7 @@ CREATE TABLE `favorite_job` (
     UNIQUE KEY `uk_favorite_candidate_job` (`candidate_id`, `job_id`),
     KEY `idx_favorite_candidate` (`candidate_id`),
     KEY `idx_favorite_job` (`job_id`),
-    CONSTRAINT `fk_favorite_candidate` FOREIGN KEY (`candidate_id`) REFERENCES `user` (`id`),
+    CONSTRAINT `fk_favorite_candidate` FOREIGN KEY (`candidate_id`) REFERENCES `users` (`id`),
     CONSTRAINT `fk_favorite_job` FOREIGN KEY (`job_id`) REFERENCES `job` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='求职者收藏职位（联合唯一）';
 
@@ -330,8 +331,8 @@ CREATE TABLE `favorite_job` (
 DROP TABLE IF EXISTS `conversation`;
 CREATE TABLE `conversation` (
     `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键',
-    `hr_user_id` BIGINT NOT NULL COMMENT '关联 user.id（HR）',
-    `candidate_id` BIGINT NOT NULL COMMENT '关联 user.id（CANDIDATE）',
+    `hr_user_id` BIGINT NOT NULL COMMENT '关联 users.id（HR）',
+    `candidate_id` BIGINT NOT NULL COMMENT '关联 users.id（CANDIDATE）',
     `last_message_at` DATETIME NULL COMMENT '最后消息时间',
     `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
@@ -340,8 +341,8 @@ CREATE TABLE `conversation` (
     UNIQUE KEY `uk_conversation_hr_candidate` (`hr_user_id`, `candidate_id`, `is_deleted`),
     KEY `idx_conversation_hr_updated` (`hr_user_id`, `last_message_at`),
     KEY `idx_conversation_candidate_updated` (`candidate_id`, `last_message_at`),
-    CONSTRAINT `fk_conversation_hr` FOREIGN KEY (`hr_user_id`) REFERENCES `user` (`id`),
-    CONSTRAINT `fk_conversation_candidate` FOREIGN KEY (`candidate_id`) REFERENCES `user` (`id`)
+    CONSTRAINT `fk_conversation_hr` FOREIGN KEY (`hr_user_id`) REFERENCES `users` (`id`),
+    CONSTRAINT `fk_conversation_candidate` FOREIGN KEY (`candidate_id`) REFERENCES `users` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='消息会话；二元组唯一';
 
 -- ============================================================
@@ -351,7 +352,7 @@ DROP TABLE IF EXISTS `message`;
 CREATE TABLE `message` (
     `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键',
     `conversation_id` BIGINT NOT NULL COMMENT '关联 conversation.id',
-    `sender_id` BIGINT NOT NULL COMMENT '发送人 user.id；SYSTEM=0 特殊值',
+    `sender_id` BIGINT NOT NULL COMMENT '发送人 users.id；SYSTEM=0 特殊值',
     `sender_role` VARCHAR(32) NOT NULL COMMENT 'CANDIDATE / HR / SYSTEM',
     `job_id` BIGINT NULL COMMENT '关联职位（可空）',
     `content` TEXT NOT NULL COMMENT '消息内容',
@@ -364,7 +365,7 @@ CREATE TABLE `message` (
     KEY `idx_message_sender` (`sender_id`),
     KEY `idx_message_job` (`job_id`),
     CONSTRAINT `fk_message_conv` FOREIGN KEY (`conversation_id`) REFERENCES `conversation` (`id`),
-    CONSTRAINT `fk_message_sender` FOREIGN KEY (`sender_id`) REFERENCES `user` (`id`),
+    CONSTRAINT `fk_message_sender` FOREIGN KEY (`sender_id`) REFERENCES `users` (`id`),
     CONSTRAINT `fk_message_job` FOREIGN KEY (`job_id`) REFERENCES `job` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='消息；SYSTEM 角色用于系统通知';
 
@@ -401,7 +402,7 @@ CREATE TABLE `ai_call_log` (
     `completion_tokens` INT NULL COMMENT '输出 token 数',
     `status` VARCHAR(32) NOT NULL COMMENT 'SUCCESS / FAIL / TIMEOUT',
     `error_message` VARCHAR(512) NULL COMMENT '错误信息',
-    `caller_user_id` BIGINT NULL COMMENT '调用方 user.id',
+    `caller_user_id` BIGINT NULL COMMENT '调用方 users.id',
     `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     `is_deleted` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '逻辑删除：0 未删 / 1 已删',
@@ -409,7 +410,7 @@ CREATE TABLE `ai_call_log` (
     KEY `idx_ailog_func_created` (`function_code`, `created_at`),
     KEY `idx_ailog_caller` (`caller_user_id`),
     KEY `idx_ailog_status` (`status`),
-    CONSTRAINT `fk_ailog_caller` FOREIGN KEY (`caller_user_id`) REFERENCES `user` (`id`)
+    CONSTRAINT `fk_ailog_caller` FOREIGN KEY (`caller_user_id`) REFERENCES `users` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='AI 调用日志';
 
 -- ============================================================
@@ -418,7 +419,7 @@ CREATE TABLE `ai_call_log` (
 DROP TABLE IF EXISTS `audit_log`;
 CREATE TABLE `audit_log` (
     `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键',
-    `admin_id` BIGINT NOT NULL COMMENT '管理员 user.id（ADMIN 角色）',
+    `admin_id` BIGINT NOT NULL COMMENT '管理员 users.id（ADMIN 角色）',
     `action_type` VARCHAR(64) NOT NULL COMMENT 'USER_ENABLE / USER_DISABLE / USER_RESET_PASSWORD / JOB_APPROVE / JOB_REJECT / COMPANY_VERIFY / COMPANY_REJECT / RESUME_DISABLE / DICT_*',
     `target_id` BIGINT NULL COMMENT '操作目标 id',
     `target_type` VARCHAR(64) NULL COMMENT 'USER / JOB / COMPANY / RESUME / DICT_INDUSTRY / DICT_CITY / DICT_SKILL',
@@ -431,7 +432,7 @@ CREATE TABLE `audit_log` (
     PRIMARY KEY (`id`),
     KEY `idx_audit_admin_created` (`admin_id`, `created_at`),
     KEY `idx_audit_target` (`target_type`, `target_id`),
-    CONSTRAINT `fk_audit_admin` FOREIGN KEY (`admin_id`) REFERENCES `user` (`id`)
+    CONSTRAINT `fk_audit_admin` FOREIGN KEY (`admin_id`) REFERENCES `users` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='管理员操作日志';
 
 -- ============================================================
@@ -444,5 +445,5 @@ SET FOREIGN_KEY_CHECKS = 1;
 -- 19 张表全部创建
 -- 后续步骤：
 --   1. 注入种子数据（admin + 字典）
---   2. 验证 by `SHOW TABLES;` 和 `SHOW CREATE TABLE user;`
+--   2. 验证 by `SHOW TABLES;` 和 `SHOW CREATE TABLE users;`
 -- ============================================================
