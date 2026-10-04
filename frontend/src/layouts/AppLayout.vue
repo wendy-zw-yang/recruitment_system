@@ -1,7 +1,7 @@
 <script setup>
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAuthStore } from '@/stores/useAuthStore'
 
 const route = useRoute()
@@ -32,9 +32,26 @@ function goProfile() {
   router.push('/profile')
 }
 
-function logout() {
+async function logout() {
+  try {
+    await ElMessageBox.confirm('确定要退出登录吗？', '提示', { type: 'warning' })
+  } catch {
+    return
+  }
   auth.logout()
   router.push('/login')
+}
+
+// 非首页展示「返回」按钮，点击回到上级页面（浏览器历史上一页）；
+// 如果没有历史（直接进入或刷新），回到首页兜底。
+const showBackButton = computed(() => route.path !== '/home')
+
+function goBack() {
+  if (window.history.length > 1) {
+    router.back()
+  } else {
+    router.push('/home')
+  }
 }
 </script>
 
@@ -78,6 +95,12 @@ function logout() {
 
   <main class="main-content">
     <slot />
+    <div v-if="showBackButton" class="back-bar">
+      <button class="back-btn" type="button" @click="goBack" aria-label="返回上一页">
+        <span class="back-icon">←</span>
+        <span class="back-text">返回</span>
+      </button>
+    </div>
   </main>
 </template>
 
@@ -279,6 +302,50 @@ function logout() {
 
 .main-content {
   min-height: 100vh;
+}
+
+.back-bar {
+  /* 页内最下方，左对齐页内组件（与 page-shell 内容左缘对齐） */
+  padding: 16px 24px 28px;
+  display: flex;
+  justify-content: flex-start;
+}
+.back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel-strong);
+  color: var(--text-soft);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.18s ease;
+}
+.back-btn:hover {
+  background: var(--primary-tint);
+  border-color: var(--primary);
+  color: var(--primary-deep);
+}
+.back-icon {
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1;
+}
+.back-text {
+  letter-spacing: 0.02em;
+}
+
+@media (max-width: 720px) {
+  .back-bar {
+    padding: 12px 14px 20px;
+  }
+  .back-btn {
+    padding: 5px 12px;
+    font-size: 12px;
+  }
 }
 
 @media (max-width: 720px) {
