@@ -12,5 +12,6 @@ export const resumeApi = {
   },
   update: (id, data) => http.put(`/api/resumes/${id}`, data),
   archive: (id) => http.post(`/api/resumes/${id}/archive`),
+  remove: (id) => http.delete(`/api/resumes/${id}`),
   attachmentDownloadUrl: (id) => `/api/resumes/attachment/${id}/download`
 }

@@ -37,6 +37,16 @@ export const useResumeStore = defineStore('resume', () => {
     current.value = null
   }
 
+  /**
+   * 删除候选人本人的简历。后端软删 resume/attachment + 删除磁盘文件 + 自动归档遗留 ACTIVE。
+   * 删除后强制重新拉一次 current，确保 store 与后端一致（避免「看起来没删」错觉）。
+   */
+  async function remove(id) {
+    await resumeApi.remove(id)
+    await fetchCurrent()
+    uploadProgress.value = 0
+  }
+
   return {
     current,
     loading,
@@ -44,6 +54,7 @@ export const useResumeStore = defineStore('resume', () => {
     fetchCurrent,
     upload,
     save,
-    archive
+    archive,
+    remove
   }
 })

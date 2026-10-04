@@ -96,7 +96,8 @@ class ResumeServiceTest {
 
     @Test
     @Transactional
-    void uploadAndParse_existingActive_throws() {
+    void uploadAndParse_existingActive_autoArchives_andCreatesNew() {
+        // 2026-10-04 行为变更：上传时若已有 ACTIVE，自动归档旧的并创建新的（防御遗留数据）。
         Long candidateId = createCandidate();
         when(fileStorageService.save(any(), anyString())).thenReturn("resume/2026-10/abc.pdf");
         when(fileStorageService.resolveAbsolute(anyString()))
@@ -107,11 +108,21 @@ class ResumeServiceTest {
 
         MockMultipartFile file = new MockMultipartFile("file", "cv.pdf",
                 "application/pdf", "x".getBytes());
-        resumeService().uploadAndParse(candidateId, file);
+        Long firstId = resumeService().uploadAndParse(candidateId, file).getResume().getId();
 
         MockMultipartFile file2 = new MockMultipartFile("file", "cv2.pdf",
                 "application/pdf", "x".getBytes());
-        assertThrows(BusinessException.class, () -> resumeService().uploadAndParse(candidateId, file2));
+        ResumeUploadResponse second = resumeService().uploadAndParse(candidateId, file2);
+
+        // 不抛错
+        assertNotNull(second.getResume().getId());
+        // 旧简历被自动归档
+        Resume firstAfter = resumeMapper.selectById(firstId);
+        assertNotNull(firstAfter);
+        assertTrue(Boolean.TRUE.equals(firstAfter.getArchived()));
+        // 当前 ACTIVE 是新的
+        assertEquals(second.getResume().getId(),
+                resumeService().getCurrentActive(candidateId).getId());
     }
 
     @Test
@@ -181,6 +192,131 @@ class ResumeServiceTest {
         req.setBasicName("hacker");
         assertThrows(BusinessException.class,
                 () -> resumeService().updateResume(9999L, resumeId, req));
+    }
+
+    @Test
+    @Transactional
+    void deleteResume_softDeletesRow_andAllowsReupload() {
+        Long candidateId = createCandidate();
+        when(fileStorageService.save(any(), anyString())).thenReturn("resume/2026-10/abc.pdf");
+        when(fileStorageService.resolveAbsolute(anyString()))
+                .thenReturn(java.nio.file.Paths.get("uploads").resolve("resume/2026-10/abc.pdf"));
+        when(textExtractService.extractText(anyString())).thenReturn("text");
+        when(llmResumeParseService.parseToJson(anyString(), anyLong()))
+                .thenReturn(buildParsedJson());
+
+        MockMultipartFile file = new MockMultipartFile("file", "cv.pdf",
+                "application/pdf", "x".getBytes());
+        Long resumeId = resumeService().uploadAndParse(candidateId, file).getResume().getId();
+
+        // 执行删除
+        resumeService().deleteResume(candidateId, resumeId);
+
+        // getCurrentActive 应返回 null（软删已生效）
+        assertNull(resumeService().getCurrentActive(candidateId));
+
+        // 重新上传应成功（不再被「已有 ACTIVE」拦截）
+        MockMultipartFile file2 = new MockMultipartFile("file", "cv2.pdf",
+                "application/pdf", "y".getBytes());
+        ResumeUploadResponse resp = resumeService().uploadAndParse(candidateId, file2);
+        assertNotNull(resp.getResume().getId());
+        assertTrue(resp.isAiParsed());
+    }
+
+    @Test
+    @Transactional
+    void deleteResume_rejectsForeignOwnership() {
+        Long ownerId = createCandidate();
+        when(fileStorageService.save(any(), anyString())).thenReturn("resume/2026-10/abc.pdf");
+        when(fileStorageService.resolveAbsolute(anyString()))
+                .thenReturn(java.nio.file.Paths.get("uploads").resolve("resume/2026-10/abc.pdf"));
+        when(textExtractService.extractText(anyString())).thenReturn("text");
+        when(llmResumeParseService.parseToJson(anyString(), anyLong()))
+                .thenReturn(buildParsedJson());
+
+        MockMultipartFile file = new MockMultipartFile("file", "cv.pdf",
+                "application/pdf", "x".getBytes());
+        Long resumeId = resumeService().uploadAndParse(ownerId, file).getResume().getId();
+
+        assertThrows(BusinessException.class,
+                () -> resumeService().deleteResume(9999L, resumeId));
+    }
+
+    @Test
+    @Transactional
+    void deleteResume_notFound_throws() {
+        Long candidateId = createCandidate();
+        assertThrows(BusinessException.class,
+                () -> resumeService().deleteResume(candidateId, 99999L));
+    }
+
+    @Test
+    @Transactional
+    void deleteResume_autoArchivesOtherActiveResume_legacyDataGuard() {
+        // 模拟遗留数据：同候选人已有 2 条 ACTIVE。删除其中一条时，另一条应被自动归档。
+        Long candidateId = createCandidate();
+        when(fileStorageService.save(any(), anyString())).thenReturn("resume/2026-10/abc.pdf");
+        when(fileStorageService.resolveAbsolute(anyString()))
+                .thenReturn(java.nio.file.Paths.get("uploads").resolve("resume/2026-10/abc.pdf"));
+        when(textExtractService.extractText(anyString())).thenReturn("text");
+        when(llmResumeParseService.parseToJson(anyString(), anyLong()))
+                .thenReturn(buildParsedJson());
+
+        MockMultipartFile f1 = new MockMultipartFile("file", "cv.pdf",
+                "application/pdf", "x".getBytes());
+        MockMultipartFile f2 = new MockMultipartFile("file", "cv2.pdf",
+                "application/pdf", "y".getBytes());
+        Long id1 = resumeService().uploadAndParse(candidateId, f1).getResume().getId();
+        // 绕过应用层校验，直接插入第二条 ACTIVE（模拟遗留数据）
+        com.example.recruitmentsystem.entity.Resume manual = new com.example.recruitmentsystem.entity.Resume();
+        manual.setCandidateId(candidateId);
+        manual.setArchived(false);
+        resumeMapper.insert(manual);
+        Long id2 = manual.getId();
+
+        // 删除其中一条
+        resumeService().deleteResume(candidateId, id1);
+
+        // 两条都应不再是 ACTIVE：id1 软删，id2 被自动归档
+        assertNull(resumeService().getCurrentActive(candidateId));
+        com.example.recruitmentsystem.entity.Resume after1 = resumeMapper.selectById(id1);
+        com.example.recruitmentsystem.entity.Resume after2 = resumeMapper.selectById(id2);
+        // id1: 软删后 selectById 因 @TableLogic 返回 null
+        assertNull(after1);
+        // id2: 仍可见（没软删），但应已归档
+        assertNotNull(after2);
+        assertTrue(Boolean.TRUE.equals(after2.getArchived()));
+    }
+
+    @Test
+    @Transactional
+    void uploadAndParse_autoArchivesLegacyActiveResume() {
+        // 模拟遗留数据：插入 1 条 ACTIVE 后直接调 upload，期望自动归档旧 + 创建新。
+        Long candidateId = createCandidate();
+        when(fileStorageService.save(any(), anyString())).thenReturn("resume/2026-10/abc.pdf");
+        when(fileStorageService.resolveAbsolute(anyString()))
+                .thenReturn(java.nio.file.Paths.get("uploads").resolve("resume/2026-10/abc.pdf"));
+        when(textExtractService.extractText(anyString())).thenReturn("text");
+        when(llmResumeParseService.parseToJson(anyString(), anyLong()))
+                .thenReturn(buildParsedJson());
+
+        // 直接 SQL 插入遗留 ACTIVE
+        com.example.recruitmentsystem.entity.Resume legacy = new com.example.recruitmentsystem.entity.Resume();
+        legacy.setCandidateId(candidateId);
+        legacy.setArchived(false);
+        resumeMapper.insert(legacy);
+
+        MockMultipartFile file = new MockMultipartFile("file", "new.pdf",
+                "application/pdf", "z".getBytes());
+        ResumeUploadResponse resp = resumeService().uploadAndParse(candidateId, file);
+
+        // 旧 ACTIVE 应被自动归档
+        com.example.recruitmentsystem.entity.Resume legacyAfter = resumeMapper.selectById(legacy.getId());
+        assertTrue(Boolean.TRUE.equals(legacyAfter.getArchived()));
+
+        // 新简历应为唯一 ACTIVE
+        assertNotNull(resp.getResume().getId());
+        assertEquals(resp.getResume().getId(), resumeService().getCurrentActive(candidateId).getId());
     }
 
     private com.fasterxml.jackson.databind.JsonNode buildParsedJson() {

@@ -12,6 +12,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -59,6 +60,17 @@ public class ResumeController {
     @PostMapping("/{id}/archive")
     public Result<Void> archive(@PathVariable Long id) {
         resumeService.archiveResume(CurrentUserContext.getUserId(), id);
+        return Result.success();
+    }
+
+    /**
+     * 候选人本人删除当前简历（软删 resume + 删除附件磁盘文件 + 删除 attachment 行）。
+     * 删除后候选人可以立即重新上传（触发新一轮 AI-1 解析）。
+     */
+    @RoleCandidate
+    @DeleteMapping("/{id}")
+    public Result<Void> delete(@PathVariable Long id) {
+        resumeService.deleteResume(CurrentUserContext.getUserId(), id);
         return Result.success();
     }
 

@@ -26,6 +26,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.File;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 
@@ -64,9 +65,19 @@ public class ResumeServiceImpl implements ResumeService {
     @Override
     @Transactional
     public ResumeUploadResponse uploadAndParse(Long candidateId, MultipartFile file) {
-        Resume existing = resumeMapper.selectActiveByCandidate(candidateId);
-        if (existing != null) {
-            throw new BusinessException(400, "请先归档当前简历");
+        // 防御：把候选人所有现存 ACTIVE（理论上仅 1 条，但遗留数据可能多条）一次性归档，
+        // 保证新上传的简历成为唯一 ACTIVE。这样候选人无感知地从「可能有多份 ACTIVE」过渡到「全新一份」。
+        List<Resume> existingActives = resumeMapper.selectList(
+                new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<Resume>()
+                        .eq("candidate_id", candidateId)
+                        .eq("is_archived", false));
+        for (Resume old : existingActives) {
+            Resume update = new Resume();
+            update.setId(old.getId());
+            update.setArchived(true);
+            resumeMapper.updateById(update);
+            log.warn("[ResumeService] 上传时发现遗留 ACTIVE，已自动归档: resumeId={}, candidateId={}",
+                    old.getId(), candidateId);
         }
 
         String relativePath = fileStorageService.save(file, "resume");
@@ -149,6 +160,59 @@ public class ResumeServiceImpl implements ResumeService {
         update.setId(resumeId);
         update.setArchived(true);
         resumeMapper.updateById(update);
+    }
+
+    @Override
+    @Transactional
+    public void deleteResume(Long candidateId, Long resumeId) {
+        Resume resume = resumeMapper.selectById(resumeId);
+        if (resume == null) {
+            throw new BusinessException(404, "简历不存在");
+        }
+        if (!resume.getCandidateId().equals(candidateId)) {
+            throw new BusinessException(403, "无权操作他人简历");
+        }
+
+        // 1) 删除磁盘附件文件（收集后再删，避免部分失败留下脏数据）
+        List<ResumeAttachment> attachments = attachmentMapper.selectList(
+                new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<ResumeAttachment>()
+                        .eq("resume_id", resumeId));
+        for (ResumeAttachment att : attachments) {
+            try {
+                Path abs = fileStorageService.resolveAbsolute(att.getFilePath());
+                Files.deleteIfExists(abs);
+            } catch (Exception e) {
+                log.warn("[ResumeService] 附件文件删除失败: path={}, msg={}", att.getFilePath(), e.getMessage());
+            }
+        }
+
+        // 2) 软删 resume_attachment 行（@TableLogic 自动处理）
+        for (ResumeAttachment att : attachments) {
+            attachmentMapper.deleteById(att.getId());
+        }
+
+        // 3) 软删 resume 行（@TableLogic 自动处理 is_deleted=1）
+        resumeMapper.deleteById(resumeId);
+
+        // 4) 防御：把同候选人其他 ACTIVE 简历一并归档（避免遗留数据导致「删了一条还有一条」看起来像没删）。
+        //    单一 ACTIVE 原则不应被破坏，但万一数据库被手动改过 / 历史 bug 留下多条 ACTIVE，
+        //    用户的「删除」动作应让他真正回到「无 ACTIVE」状态。
+        List<Resume> remainingActives = resumeMapper.selectList(
+                new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<Resume>()
+                        .eq("candidate_id", candidateId)
+                        .eq("is_archived", false)
+                        .ne("id", resumeId));
+        for (Resume r : remainingActives) {
+            Resume update = new Resume();
+            update.setId(r.getId());
+            update.setArchived(true);
+            resumeMapper.updateById(update);
+            log.warn("[ResumeService] 删除时连带归档遗留 ACTIVE: resumeId={}, candidateId={}",
+                    r.getId(), candidateId);
+        }
+
+        log.info("[ResumeService] 简历已删除: resumeId={}, candidateId={}, attachments={}, 连带归档={}",
+                resumeId, candidateId, attachments.size(), remainingActives.size());
     }
 
     @Override

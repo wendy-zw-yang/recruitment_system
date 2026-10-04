@@ -19,8 +19,11 @@ public interface ResumeService {
     /** UC-07 编辑简历（不触发 AI） */
     ResumeDto updateResume(Long candidateId, Long resumeId, ResumeUpdateRequest request);
 
-    /** UC-08 Step 1：归档当前 ACTIVE 简历 */
+    /** UC-08 Step 1：归档当前 ACTIVE 简历（保留行数据，{@code is_archived=true}） */
     void archiveResume(Long candidateId, Long resumeId);
+
+    /** 删除候选人本人的简历。软删行 + 删除磁盘附件文件 + 删除 resume_attachment 行。 */
+    void deleteResume(Long candidateId, Long resumeId);
 
     /** 按 ID 查询（鉴权：候选人本人 / 管理员） */
     ResumeDto getById(Long requesterId, String requesterRole, Long resumeId);
