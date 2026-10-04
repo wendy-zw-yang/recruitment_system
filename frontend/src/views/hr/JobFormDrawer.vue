@@ -190,9 +190,9 @@ async function onSubmit() {
 
       <el-form-item label="薪资范围">
         <div class="salary-row">
-          <el-input-number v-model="form.salaryMin" :min="0" :step="1" placeholder="K" controls-position="right" />
+          <el-input-number v-model="form.salaryMin" :min="1" :step="1" :precision="0" placeholder="K" controls-position="right" />
           <span class="dash">—</span>
-          <el-input-number v-model="form.salaryMax" :min="0" :step="1" placeholder="K" controls-position="right" />
+          <el-input-number v-model="form.salaryMax" :min="1" :step="1" :precision="0" placeholder="K" controls-position="right" />
           <span class="unit">K / 月</span>
         </div>
       </el-form-item>

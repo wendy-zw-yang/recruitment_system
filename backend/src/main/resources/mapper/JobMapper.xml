@@ -23,23 +23,12 @@
         <result property="isDeleted" column="is_deleted"/>
     </resultMap>
 
-    <select id="selectPageByHr" resultMap="JobMap">
-        SELECT *
-        FROM job
-        WHERE is_deleted = 0
-          AND hr_user_id = #{hrUserId}
-          <if test="status != null and status != ''">
-              AND status = #{status}
-          </if>
-        ORDER BY updated_at DESC
-    </select>
-
     <select id="selectPageForCandidate" resultMap="JobMap">
         SELECT *
         FROM job
         WHERE is_deleted = 0
           AND status = 'ONLINE'
-          AND audit_status = 'APPROVED'
+          <!-- v0.4 修订：取消 audit_status 过滤（无审核流） -->
           <if test="keyword != null and keyword != ''">
               AND (title LIKE CONCAT('%', #{keyword}, '%')
                    OR description LIKE CONCAT('%', #{keyword}, '%'))
@@ -54,10 +43,10 @@
               AND province = #{province}
           </if>
         ORDER BY
-          <choose>
-              <when test="sort == 'salary'">salary_max DESC</when>
-              <otherwise>published_at DESC</otherwise>
-          </choose>
+            <choose>
+                <when test="sort == 'salary'">salary_max DESC</when>
+                <otherwise>published_at DESC</otherwise>
+            </choose>
     </select>
 
 </mapper>

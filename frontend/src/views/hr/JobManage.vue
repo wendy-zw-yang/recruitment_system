@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
 import { jobApi } from '@/api/job'
@@ -10,12 +10,11 @@ const route = useRoute()
 
 const tabs = [
   { key: 'DRAFT', label: '草稿' },
-  { key: 'PENDING', label: '审核中' },
   { key: 'ONLINE', label: '招聘中' },
   { key: 'OFFLINE', label: '已下架' }
 ]
 
-const activeTab = ref('ONLINE')
+const activeTab = ref('DRAFT')
 const loading = ref(false)
 const records = ref([])
 const total = ref(0)
@@ -26,11 +25,6 @@ const STATUS_MAP = {
   DRAFT: { label: '草稿', type: 'info' },
   ONLINE: { label: '招聘中', type: 'success' },
   OFFLINE: { label: '已下架', type: 'info' }
-}
-const AUDIT_MAP = {
-  PENDING: { label: '审核中', type: 'warning' },
-  APPROVED: { label: '已通过', type: 'success' },
-  REJECTED: { label: '已驳回', type: 'danger' }
 }
 
 async function fetchJobs() {
@@ -145,7 +139,6 @@ onMounted(() => {
         <div>行业 / 城市</div>
         <div>薪资</div>
         <div>状态</div>
-        <div>审核</div>
         <div>更新时间</div>
         <div class="text-right">操作</div>
       </div>
@@ -159,31 +152,31 @@ onMounted(() => {
           <span>{{ row.cityName || '—' }}</span>
         </div>
         <div class="salary">
-          {{ row.salaryMin ? `${row.salaryMin}-${row.salaryMax}K` : '面议' }}
+          <span class="salary-amount">{{ row.salaryMin ? `${row.salaryMin}-${row.salaryMax}` : '面议' }}</span>
+          <span class="salary-unit" v-if="row.salaryMin">K / 月</span>
         </div>
         <div>
           <el-tag :type="STATUS_MAP[row.status]?.type" size="small">{{ STATUS_MAP[row.status]?.label }}</el-tag>
         </div>
-        <div>
-          <el-tag v-if="AUDIT_MAP[row.auditStatus]" :type="AUDIT_MAP[row.auditStatus].type" size="small" effect="plain">
-            {{ AUDIT_MAP[row.auditStatus].label }}
-          </el-tag>
-          <span v-if="row.auditNote" class="audit-note">{{ row.auditNote }}</span>
-        </div>
         <div class="time">{{ row.updatedAt ? new Date(row.updatedAt).toLocaleString('zh-CN', { hour12: false }) : '—' }}</div>
         <div class="text-right actions">
+          <!-- 草稿 → 上线 -->
           <el-button v-if="row.status === 'DRAFT'" text type="primary" size="small" @click="handlePublish(row)">
-            提交上线
+            上线
           </el-button>
+          <!-- 已下架 → 重新上线 -->
           <el-button v-if="row.status === 'OFFLINE'" text type="primary" size="small" @click="handlePublish(row)">
             重新上线
           </el-button>
+          <!-- 招聘中 → 下架 -->
           <el-button v-if="row.status === 'ONLINE'" text type="warning" size="small" @click="handleOffline(row)">
             下架
           </el-button>
+          <!-- 编辑：除 ONLINE 外 -->
           <el-button v-if="row.status !== 'ONLINE'" text type="primary" size="small" @click="openEdit(row)">
             编辑
           </el-button>
+          <!-- 删除：除 ONLINE 外 -->
           <el-button v-if="row.status !== 'ONLINE'" text type="danger" size="small" @click="handleDelete(row)">
             删除
           </el-button>
@@ -222,6 +215,10 @@ onMounted(() => {
   font-size: 13px;
   color: var(--text-soft);
   cursor: pointer;
+  transition: background 0.18s ease, color 0.18s ease;
+}
+.tab-btn:hover {
+  color: var(--primary);
 }
 .tab-btn--active {
   background: var(--panel-strong);
@@ -229,55 +226,90 @@ onMounted(() => {
   font-weight: 600;
   box-shadow: var(--shadow-soft);
 }
-.job-table {
-  border-radius: 12px;
-  overflow: hidden;
-  border: 1px solid var(--line);
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 48px 0;
   background: var(--panel-strong);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  box-shadow: var(--shadow-soft);
+}
+.empty-state__icon {
+  font-size: 48px;
+  margin-bottom: 12px;
+  opacity: 0.55;
+}
+.empty-state__title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 6px;
+}
+.empty-state__desc {
+  font-size: 13px;
+  color: var(--text-soft);
+}
+
+.job-table {
+  background: var(--panel-strong);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 8px 16px;
+  box-shadow: var(--shadow-soft);
 }
 .row {
   display: grid;
-  grid-template-columns: 2fr 1.5fr 1fr 1fr 1.5fr 1.4fr 2fr;
-  gap: 12px;
-  padding: 14px 18px;
+  grid-template-columns: 2.4fr 1.4fr 0.9fr 0.9fr 1.1fr 1.6fr;
   align-items: center;
+  padding: 14px 0;
   border-bottom: 1px solid var(--line);
-  font-size: 13px;
-  color: var(--text);
 }
 .row:last-child { border-bottom: none; }
 .row--head {
-  background: var(--bg);
-  color: var(--text-soft);
-  font-weight: 600;
   font-size: 12px;
+  color: var(--text-soft);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 12px 0 10px;
+  border-bottom: 1px solid var(--line);
 }
 .job-info { display: flex; flex-direction: column; gap: 2px; }
-.job-title { font-weight: 600; }
+.job-title { font-weight: 600; color: var(--text); }
 .job-company { font-size: 12px; color: var(--text-soft); }
-.meta { display: flex; flex-direction: column; gap: 2px; color: var(--text-soft); font-size: 12px; }
-.salary { font-weight: 600; color: var(--danger); }
-.audit-note {
-  display: block;
-  font-size: 11px;
-  color: var(--text-muted);
-  margin-top: 4px;
-  max-width: 180px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.meta { display: flex; gap: 12px; font-size: 13px; color: var(--text-soft); }
+.salary {
+  display: flex;
+  align-items: baseline;
+  gap: 3px;
 }
-.time { color: var(--text-muted); font-size: 12px; }
-.actions { display: flex; justify-content: flex-end; gap: 4px; flex-wrap: wrap; }
+.salary-amount {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--danger);
+  letter-spacing: -0.02em;
+}
+.salary-unit {
+  font-size: 11px;
+  color: var(--text-soft);
+}
+.time { font-size: 13px; color: var(--text-soft); }
 .text-right { text-align: right; }
-.empty-state, .loading {
-  padding: 56px 24px;
+.actions { display: flex; justify-content: flex-end; gap: 6px; flex-wrap: wrap; }
+
+.loading {
+  padding: 24px;
   text-align: center;
+  color: var(--text-soft);
   background: var(--panel-strong);
   border: 1px solid var(--line);
   border-radius: 16px;
 }
-.empty-state__icon { font-size: 48px; opacity: 0.55; margin-bottom: 8px; }
-.empty-state__title { font-size: 16px; font-weight: 600; margin-bottom: 6px; color: var(--text); }
-.empty-state__desc { font-size: 13px; color: var(--text-soft); }
+
+@media (max-width: 900px) {
+  .row { grid-template-columns: 1.6fr 1fr 1fr; row-gap: 6px; }
+  .row--head { display: none; }
+}
 </style>

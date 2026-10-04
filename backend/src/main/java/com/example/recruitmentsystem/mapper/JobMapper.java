@@ -11,13 +11,8 @@ import org.apache.ibatis.annotations.Param;
 public interface JobMapper extends BaseMapper<Job> {
 
     /**
-     * HR 端分页查询（按状态过滤）。
-     */
-    IPage<Job> selectPageByHr(Page<Job> page, @Param("hrUserId") Long hrUserId,
-                              @Param("status") String status);
-
-    /**
-     * 候选人端分页查询（仅 ONLINE + APPROVED）。
+     * 候选人端分页查询（仅 ONLINE，无审核要求）。
+     * v0.4：移除 audit_status=APPROVED 条件。
      */
     IPage<Job> selectPageForCandidate(Page<Job> page,
                                       @Param("keyword") String keyword,

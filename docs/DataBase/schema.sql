@@ -177,7 +177,7 @@ CREATE TABLE `job` (
     `requirements` TEXT NOT NULL COMMENT 'JD 任职要求',
     `keywords` VARCHAR(255) NULL COMMENT '关键词（逗号分隔，AI 润色输出）',
     `status` VARCHAR(32) NOT NULL DEFAULT 'DRAFT' COMMENT 'DRAFT / ONLINE / OFFLINE / DELETED',
-    `audit_status` VARCHAR(32) NOT NULL DEFAULT 'PENDING' COMMENT 'PENDING / APPROVED / REJECTED',
+    `audit_status` VARCHAR(32) NOT NULL DEFAULT 'NONE' COMMENT '【v0.3 字段保留但停用】UC-35 职位审核取消后此字段无意义；保留以便未来扩展；当前固定 NONE。历史 NONE / PENDING / APPROVED / REJECTED 数据保留',
     `audit_note` VARCHAR(512) NULL COMMENT '审核驳回理由',
     `published_at` DATETIME NULL COMMENT '发布时间',
     `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',

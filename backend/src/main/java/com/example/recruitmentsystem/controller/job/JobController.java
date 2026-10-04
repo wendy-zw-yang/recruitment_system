@@ -24,6 +24,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 /**
  * 职位 Controller。覆盖 UC-21/22/23/09/10/11。
+ * v0.4 修订：删除 /submit /resubmit 端点（审核流已取消，HR 创建草稿后直接上线）。
  */
 @RestController
 @RequestMapping("/api/jobs")
@@ -70,7 +71,12 @@ public class JobController {
     public Result<IPage<JobDto>> listMine(@RequestParam(required = false) String status,
                                           @RequestParam(defaultValue = "1") Integer pageNum,
                                           @RequestParam(defaultValue = "10") Integer pageSize) {
-        return Result.success(jobService.listMineByStatus(CurrentUserContext.getUserId(), status, pageNum, pageSize));
+        // v0.4：仅 3 个 tab（DRAFT / ONLINE / OFFLINE），按 status 字段严格区分
+        if (status != null && !status.isBlank()) {
+            return Result.success(jobService.listMineByTab(CurrentUserContext.getUserId(), status.trim(), pageNum, pageSize));
+        }
+        // 不传 status 时默认返回 DRAFT tab
+        return Result.success(jobService.listMineByTab(CurrentUserContext.getUserId(), "DRAFT", pageNum, pageSize));
     }
 
     @RoleHR

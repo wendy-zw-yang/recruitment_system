@@ -4,7 +4,6 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.example.recruitmentsystem.common.exception.BusinessException;
-import com.example.recruitmentsystem.dto.job.JobAuditRequest;
 import com.example.recruitmentsystem.dto.job.JobCreateRequest;
 import com.example.recruitmentsystem.dto.job.JobDto;
 import com.example.recruitmentsystem.dto.job.JobUpdateRequest;
@@ -21,7 +20,6 @@ import com.example.recruitmentsystem.mapper.DictIndustryMapper;
 import com.example.recruitmentsystem.mapper.FavoriteJobMapper;
 import com.example.recruitmentsystem.mapper.JobMapper;
 import com.example.recruitmentsystem.mapper.UserMapper;
-import com.example.recruitmentsystem.service.AuditLogService;
 import com.example.recruitmentsystem.service.JobService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -29,24 +27,27 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
-import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
-import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
  * JobService 实现。详见 {@code docs/系统设计/详细设计/职位与公司.md §3.3}。
  *
- * <p>状态机（status）：</p>
+ * <p>v0.4 状态机（status）：</p>
  * <ul>
- *   <li>DRAFT → ONLINE（需 audit_status=APPROVED）</li>
+ *   <li>DRAFT → ONLINE（无审核）</li>
  *   <li>ONLINE → OFFLINE</li>
  *   <li>DRAFT / OFFLINE → DELETED（软删）</li>
  * </ul>
  *
- * <p>审核状态（audit_status）：PENDING → APPROVED / REJECTED（仅 Admin 可改）</p>
+ * <p>HR 端 3 个 Tab 互斥（严格按 status 字段切分）：</p>
+ * <ul>
+ *   <li>草稿：status=DRAFT</li>
+ *   <li>招聘中：status=ONLINE</li>
+ *   <li>已下架：status=OFFLINE</li>
+ * </ul>
+ *
+ * <p>audit_status 字段保留（DB 默认 'NONE'），不再被读 / 写操作使用（v0.4 取消审核流）。</p>
  */
 @Slf4j
 @Service
@@ -60,7 +61,6 @@ public class JobServiceImpl implements JobService {
     private final DictIndustryMapper industryMapper;
     private final DictCityMapper cityMapper;
     private final LlmJdService llmJdService;
-    private final AuditLogService auditLogService;
 
     // ============ HR 端 ============
 
@@ -80,7 +80,7 @@ public class JobServiceImpl implements JobService {
         applyCreateFields(job, request);
         job.setProvince(province);
         job.setStatus("DRAFT");
-        job.setAuditStatus("PENDING");
+        job.setAuditStatus("NONE");
         jobMapper.insert(job);
         return enrich(job);
     }
@@ -108,9 +108,6 @@ public class JobServiceImpl implements JobService {
         job.setDescription(request.getDescription());
         job.setRequirements(request.getRequirements());
         job.setKeywords(normalizeKeywords(request.getKeywords()));
-        // 编辑后重置为待审核
-        job.setAuditStatus("PENDING");
-        job.setAuditNote(null);
         jobMapper.updateById(job);
         return enrich(job);
     }
@@ -119,9 +116,6 @@ public class JobServiceImpl implements JobService {
     @Transactional
     public JobDto publishJob(Long hrUserId, Long jobId) {
         Job job = requireOwned(hrUserId, jobId);
-        if (!"APPROVED".equals(job.getAuditStatus())) {
-            throw new BusinessException(400, "职位尚未通过审核，无法上线");
-        }
         if (!"DRAFT".equals(job.getStatus()) && !"OFFLINE".equals(job.getStatus())) {
             throw new BusinessException(400, "当前状态不可上线");
         }
@@ -150,15 +144,27 @@ public class JobServiceImpl implements JobService {
         if ("ONLINE".equals(job.getStatus())) {
             throw new BusinessException(400, "在线职位不可删除，请先下架");
         }
-        job.setStatus("DELETED");
-        jobMapper.updateById(job);
+        // 用 @TableLogic 软删：BaseMapper.deleteById 会把 is_deleted 置 1
+        jobMapper.deleteById(jobId);
     }
 
     @Override
-    public IPage<JobDto> listMineByStatus(Long hrUserId, String status, int pageNum, int pageSize) {
+    public IPage<JobDto> listMineByTab(Long hrUserId, String tab, int pageNum, int pageSize) {
         validateHr(hrUserId);
         Page<Job> page = new Page<>(pageNum, pageSize);
-        IPage<Job> raw = jobMapper.selectPageByHr(page, hrUserId, status);
+        LambdaQueryWrapper<Job> q = new LambdaQueryWrapper<>();
+        q.eq(Job::getHrUserId, hrUserId);
+        if ("DRAFT".equals(tab)) {
+            q.eq(Job::getStatus, "DRAFT");
+        } else if ("ONLINE".equals(tab)) {
+            q.eq(Job::getStatus, "ONLINE");
+        } else if ("OFFLINE".equals(tab)) {
+            q.eq(Job::getStatus, "OFFLINE");
+        } else {
+            throw new BusinessException(400, "未知 tab: " + tab);
+        }
+        q.orderByDesc(Job::getUpdatedAt);
+        IPage<Job> raw = jobMapper.selectPage(page, q);
         return raw.convert(this::enrich);
     }
 
@@ -214,52 +220,6 @@ public class JobServiceImpl implements JobService {
         q.eq(FavoriteJob::getCandidateId, candidateId)
                 .eq(FavoriteJob::getJobId, jobId);
         return favoriteJobMapper.selectCount(q) > 0;
-    }
-
-    // ============ Admin 端 ============
-
-    @Override
-    public IPage<JobDto> listPendingAudit(int pageNum, int pageSize) {
-        Page<Job> page = new Page<>(pageNum, pageSize);
-        LambdaQueryWrapper<Job> q = new LambdaQueryWrapper<>();
-        q.eq(Job::getAuditStatus, "PENDING")
-                .eq(Job::getStatus, "DRAFT")
-                .orderByDesc(Job::getUpdatedAt);
-        IPage<Job> raw = jobMapper.selectPage(page, q);
-        return raw.convert(this::enrich);
-    }
-
-    @Override
-    @Transactional
-    public JobDto auditJob(Long adminId, Long jobId, JobAuditRequest request) {
-        Job job = jobMapper.selectById(jobId);
-        if (job == null) {
-            throw new BusinessException(404, "职位不存在");
-        }
-        if (!"PENDING".equals(job.getAuditStatus())) {
-            throw new BusinessException(400, "该职位不处于待审核状态");
-        }
-        boolean approve = request.getApprove() != null && request.getApprove();
-        Job update = new Job();
-        update.setId(jobId);
-        if (approve) {
-            update.setAuditStatus("APPROVED");
-            update.setAuditNote(null);
-        } else {
-            if (request.getNote() == null || request.getNote().isBlank()) {
-                throw new BusinessException(400, "驳回必须填写理由");
-            }
-            update.setAuditStatus("REJECTED");
-            update.setAuditNote(request.getNote());
-        }
-        jobMapper.updateById(update);
-        auditLogService.record(adminId,
-                approve ? "JOB_APPROVE" : "JOB_REJECT",
-                jobId, "JOB", null,
-                approve ? "APPROVED" : "REJECTED",
-                request.getNote());
-        Job reloaded = jobMapper.selectById(jobId);
-        return enrich(reloaded);
     }
 
     @Override
@@ -384,75 +344,69 @@ public class JobServiceImpl implements JobService {
         LambdaQueryWrapper<Company> q = new LambdaQueryWrapper<>();
         q.eq(Company::getHrUserId, hrUserId);
         Company existing = companyMapper.selectOne(q);
-        if (existing != null) return existing.getId();
-
-        User u = userMapper.selectById(hrUserId);
+        if (existing != null) {
+            return existing.getId();
+        }
         Company c = new Company();
         c.setHrUserId(hrUserId);
-        c.setName(u.getUsername() != null ? u.getUsername() + " 的公司" : "未命名公司");
+        c.setName("我的公司");
         c.setAuthStatus("PENDING");
         companyMapper.insert(c);
         return c.getId();
     }
 
-    /**
-     * 注入 companyName / industryName / cityName 等展示字段。
-     * 列表场景下用批量查表优化：候选端 listForCandidate 一次 SELECT 全部命中。
-     */
     private JobDto enrich(Job job) {
-        if (job == null) return null;
-        JobDto dto = JobDto.from(job);
-        Company c = companyMapper.selectById(job.getCompanyId());
-        if (c != null) dto.setCompanyName(c.getName());
+        JobDto dto = new JobDto();
+        dto.setId(job.getId());
+        dto.setHrUserId(job.getHrUserId());
+        dto.setTitle(job.getTitle());
+        dto.setIndustryId(job.getIndustryId());
+        dto.setCityId(job.getCityId());
+        dto.setProvince(job.getProvince());
+        dto.setSalaryMin(job.getSalaryMin());
+        dto.setSalaryMax(job.getSalaryMax());
+        dto.setDescription(job.getDescription());
+        dto.setRequirements(job.getRequirements());
+        dto.setKeywords(job.getKeywords());
+        dto.setStatus(job.getStatus());
+        dto.setAuditStatus(job.getAuditStatus());
+        dto.setAuditNote(job.getAuditNote());
+        dto.setPublishedAt(job.getPublishedAt());
+        dto.setCreatedAt(job.getCreatedAt());
+        dto.setUpdatedAt(job.getUpdatedAt());
+
         if (job.getIndustryId() != null) {
             DictIndustry ind = industryMapper.selectById(job.getIndustryId());
             if (ind != null) dto.setIndustryName(ind.getName());
         }
         if (job.getCityId() != null) {
             DictCity city = cityMapper.selectById(job.getCityId());
-            if (city != null) dto.setCityName(city.getName());
+            if (city != null) {
+                dto.setCityName(city.getName());
+                if (dto.getProvince() == null || dto.getProvince().isBlank()) {
+                    dto.setProvince(city.getProvince());
+                }
+            }
+        }
+        if (job.getCompanyId() != null) {
+            Company company = companyMapper.selectById(job.getCompanyId());
+            if (company != null) dto.setCompanyName(company.getName());
         }
         return dto;
     }
 
+    // ============ 内部使用：HR listAll（不暴露接口） ============
+
     /**
-     * 列表场景批量 enrich：减少 N+1 查询。
+     * Admin / 其他场景使用：分页查询所有未软删职位。
+     * 当前未在 controller 层暴露接口（审计流已取消，预留给将来需要时使用）。
      */
-    private List<JobDto> enrichBatch(List<Job> jobs) {
-        if (jobs == null || jobs.isEmpty()) return List.of();
-        Set<Long> companyIds = jobs.stream().map(Job::getCompanyId).filter(java.util.Objects::nonNull).collect(Collectors.toSet());
-        Set<Long> industryIds = jobs.stream().map(Job::getIndustryId).filter(java.util.Objects::nonNull).collect(Collectors.toSet());
-        Set<Long> cityIds = jobs.stream().map(Job::getCityId).filter(java.util.Objects::nonNull).collect(Collectors.toSet());
-
-        Map<Long, String> companyNames = new HashMap<>();
-        if (!companyIds.isEmpty()) {
-            List<Company> list = companyMapper.selectBatchIds(companyIds);
-            for (Company c : list) companyNames.put(c.getId(), c.getName());
-        }
-        Map<Long, String> industryNames = new HashMap<>();
-        if (!industryIds.isEmpty()) {
-            List<DictIndustry> list = industryMapper.selectBatchIds(industryIds);
-            for (DictIndustry i : list) industryNames.put(i.getId(), i.getName());
-        }
-        Map<Long, String> cityNames = new HashMap<>();
-        if (!cityIds.isEmpty()) {
-            List<DictCity> list = cityMapper.selectBatchIds(cityIds);
-            for (DictCity c : list) cityNames.put(c.getId(), c.getName());
-        }
-
-        List<JobDto> result = new java.util.ArrayList<>(jobs.size());
-        for (Job job : jobs) {
-            JobDto dto = JobDto.from(job);
-            if (job.getCompanyId() != null) dto.setCompanyName(companyNames.get(job.getCompanyId()));
-            if (job.getIndustryId() != null) dto.setIndustryName(industryNames.get(job.getIndustryId()));
-            if (job.getCityId() != null) dto.setCityName(cityNames.get(job.getCityId()));
-            result.add(dto);
-        }
-        return result;
-    }
-
-    // 暴露批量 enrich 给 Controller 在列表场景使用（避免 N+1）
-    public List<JobDto> enrichList(List<Job> jobs) {
-        return enrichBatch(jobs);
+    public List<JobDto> listAllJobs(int limit) {
+        return jobMapper.selectList(new LambdaQueryWrapper<Job>()
+                .orderByDesc(Job::getUpdatedAt)
+                .last("limit " + Math.max(1, Math.min(limit, 1000))))
+                .stream()
+                .map(this::enrich)
+                .collect(Collectors.toList());
     }
 }

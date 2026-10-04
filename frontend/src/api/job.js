@@ -13,9 +13,5 @@ export const jobApi = {
   // 候选人 / 公开
   list: (params) => http.get('/api/jobs', { params }),
   detail: (id) => http.get(`/api/jobs/${id}`),
-  toggleFavorite: (id) => http.post(`/api/jobs/${id}/favorite`),
-
-  // Admin 端
-  pendingAudit: (params) => http.get('/api/admin/jobs/audit/pending', { params }),
-  audit: (id, data) => http.post(`/api/admin/jobs/${id}/audit`, data)
+  toggleFavorite: (id) => http.post(`/api/jobs/${id}/favorite`)
 }

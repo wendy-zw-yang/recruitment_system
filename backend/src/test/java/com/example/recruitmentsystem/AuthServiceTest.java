@@ -131,4 +131,32 @@ class AuthServiceTest {
         assertEquals(1, codes.size());
         assertEquals(6, codes.get(0).getCode().length());
     }
+
+    @Test
+    @Transactional
+    void login_disabledAccount_fails() {
+        // 注册
+        String email = "disabled-" + System.nanoTime() + "@test.local";
+        RegisterRequest reg = new RegisterRequest();
+        reg.setEmail(email);
+        reg.setPassword("password123");
+        authService().register(reg);
+
+        // 找到 user 并禁用
+        User saved = userMapper.selectOne(
+                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<User>()
+                        .eq(User::getEmail, email));
+        saved.setStatus("DISABLED");
+        userMapper.updateById(saved);
+
+        // 登录应失败
+        LoginRequest login = new LoginRequest();
+        login.setEmail(email);
+        login.setPassword("password123");
+
+        com.example.recruitmentsystem.common.exception.BusinessException ex =
+                assertThrows(com.example.recruitmentsystem.common.exception.BusinessException.class,
+                        () -> authService().login(login));
+        org.junit.jupiter.api.Assertions.assertTrue(ex.getMessage().contains("禁用"));
+    }
 }

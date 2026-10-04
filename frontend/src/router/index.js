@@ -11,6 +11,9 @@ const routes = [
   { path: '/jobs', name: 'jobs', component: () => import('@/views/candidate/JobBrowse.vue') },
   { path: '/jobs/:id', name: 'job-detail', component: () => import('@/views/candidate/JobDetail.vue') },
   { path: '/hr/jobs', name: 'hr-jobs', component: () => import('@/views/hr/JobManage.vue'), meta: { roles: ['HR'] } },
+  // §9 管理员审核（v0.4：UC-35 职位审核删除）
+  { path: '/admin/users/audit', name: 'admin-users-audit', component: () => import('@/views/admin/UserAudit.vue'), meta: { roles: ['ADMIN'] } },
+  { path: '/admin/companies/audit', name: 'admin-companies-audit', component: () => import('@/views/admin/CompanyAudit.vue'), meta: { roles: ['ADMIN'] } },
   { path: '/forbidden', name: 'forbidden', component: () => import('@/views/common/Forbidden.vue') },
   { path: '/:pathMatch(.*)*', component: () => import('@/views/common/NotFound.vue') }
 ]
