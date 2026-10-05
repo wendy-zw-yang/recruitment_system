@@ -8,10 +8,14 @@ import com.example.recruitmentsystem.dto.auth.LoginResponse;
 import com.example.recruitmentsystem.dto.auth.RegisterRequest;
 import com.example.recruitmentsystem.service.AuthService;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Email;
+import jakarta.validation.constraints.NotBlank;
 import lombok.RequiredArgsConstructor;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
@@ -20,6 +24,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/api/auth")
 @RequiredArgsConstructor
+@Validated
 public class AuthController {
 
     private final AuthService authService;
@@ -46,8 +51,8 @@ public class AuthController {
 
     /** 发送登录验证码 */
     @PostMapping("/send-login-code")
-    public Result<Void> sendLoginCode(@Valid @RequestBody LoginRequest request) {
-        authService.sendLoginCode(request.getEmail());
+    public Result<Void> sendLoginCode(@RequestParam @NotBlank @Email String email) {
+        authService.sendLoginCode(email);
         return Result.success("验证码已生成，请查看控制台输出", null);
     }
 

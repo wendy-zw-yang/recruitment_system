@@ -1,13 +1,17 @@
 <script setup>
-import { ref, computed } from 'vue'
+import { onMounted, ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAuthStore } from '@/stores/useAuthStore'
+import { profileApi } from '@/api/profile'
+import { dictApi } from '@/api/dict'
 
 const router = useRouter()
 const auth = useAuthStore()
 
 const activeTab = ref('profile')
+const loading = ref(false)
+const industries = ref([])
 
 const tabs = computed(() => {
   const base = [
@@ -32,6 +36,7 @@ const phonePlaceholder = computed(() => {
 })
 
 const security = ref({
+  oldPassword: '',
   newPassword: '',
   confirmPassword: ''
 })
@@ -43,18 +48,88 @@ const preference = ref({
 })
 
 const company = ref({
+  id: null,
   name: '',
-  industry: '',
+  industryId: null,
+  industryName: '',
   scale: '',
   description: '',
-  authStatus: 'PENDING'
+  authStatus: 'PENDING',
+  authNote: ''
 })
 
-function saveProfile() {
-  ElMessage.success('个人资料已保存（演示态，未对接后端）')
+// ============ 数据加载 ============
+
+async function loadAll() {
+  loading.value = true
+  try {
+    // 个人资料（候选人 / HR / admin 都有）
+    const me = await profileApi.getMe()
+    profile.value.username = me.username || ''
+    profile.value.email = me.email || ''
+    profile.value.phone = me.phone || ''
+    // 同步 auth store 的 userInfo（昵称改了立刻反映）
+    if (auth.userInfo) auth.userInfo.username = me.username || ''
+
+    // HR 端"我的公司"tab 需要行业字典
+    if (auth.isHR && industries.value.length === 0) {
+      try {
+        industries.value = (await dictApi.industries()) || []
+      } catch (e) {
+        console.warn('Load industries failed:', e)
+      }
+    }
+
+    if (auth.isCandidate) {
+      const pref = await profileApi.getPreference()
+      preference.value.expectedPosition = pref.expectedPosition || ''
+      // expectedIndustry / expectedCity 仅前端展示占位
+    }
+    if (auth.isHR) {
+      const comp = await profileApi.getCompany()
+      company.value = {
+        id: comp.id,
+        name: comp.name || '',
+        industryId: comp.industryId,
+        industryName: comp.industryName || '',
+        scale: comp.scale || '',
+        description: comp.description || '',
+        authStatus: comp.authStatus || 'PENDING',
+        authNote: comp.authNote || ''
+      }
+    }
+  } catch (e) {
+    console.error('Profile load failed:', e)
+    // 静默：保留默认空值
+  } finally {
+    loading.value = false
+  }
 }
 
-function changePassword() {
+onMounted(loadAll)
+
+// ============ 4 个保存动作（v0.5：全部对接后端） ============
+
+async function saveProfile() {
+  try {
+    const updated = await profileApi.updateMe({
+      username: profile.value.username,
+      phone: profile.value.phone
+    })
+    profile.value.username = updated.username || ''
+    profile.value.phone = updated.phone || ''
+    if (auth.userInfo) auth.userInfo.username = updated.username || ''
+    ElMessage.success('个人资料已保存')
+  } catch (e) {
+    ElMessage.error(e.message || '保存失败')
+  }
+}
+
+async function changePassword() {
+  if (!security.value.oldPassword) {
+    ElMessage.warning('请输入当前密码')
+    return
+  }
   if (!security.value.newPassword || security.value.newPassword.length < 8) {
     ElMessage.warning('新密码至少 8 位')
     return
@@ -63,17 +138,48 @@ function changePassword() {
     ElMessage.warning('两次密码不一致')
     return
   }
-  ElMessage.success('密码修改成功（演示态，未对接后端）')
-  security.value.newPassword = ''
-  security.value.confirmPassword = ''
+  try {
+    await profileApi.changePassword({
+      oldPassword: security.value.oldPassword,
+      newPassword: security.value.newPassword
+    })
+    ElMessage.success('密码已修改')
+    security.value.oldPassword = ''
+    security.value.newPassword = ''
+    security.value.confirmPassword = ''
+  } catch (e) {
+    ElMessage.error(e.message || '密码修改失败')
+  }
 }
 
-function savePreference() {
-  ElMessage.success('求职偏好已保存（演示态，未对接后端）')
+async function savePreference() {
+  try {
+    await profileApi.updatePreference({
+      expectedPosition: preference.value.expectedPosition,
+      expectedIndustry: preference.value.expectedIndustry,
+      expectedCity: preference.value.expectedCity
+    })
+    ElMessage.success('求职偏好已保存')
+  } catch (e) {
+    ElMessage.error(e.message || '保存失败')
+  }
 }
 
-function saveCompany() {
-  ElMessage.success('公司信息已保存（演示态，未对接后端）')
+async function saveCompany() {
+  try {
+    const updated = await profileApi.updateCompany({
+      name: company.value.name,
+      industryId: company.value.industryId,
+      scale: company.value.scale,
+      description: company.value.description
+    })
+    company.value.authStatus = updated.authStatus || company.value.authStatus
+    company.value.authNote = updated.authNote || ''
+    company.value.industryName = updated.industryName || ''
+    ElMessage.success('公司信息已保存')
+  } catch (e) {
+    ElMessage.error(e.message || '保存失败')
+  }
 }
 
 async function handleLogout() {
@@ -135,6 +241,9 @@ async function handleLogout() {
           <h2 class="content-title">账号安全</h2>
           <p class="content-desc">定期更换密码可以提升账号安全性。</p>
           <el-form label-width="100px" class="profile-form">
+            <el-form-item label="当前密码">
+              <el-input v-model="security.oldPassword" type="password" show-password placeholder="输入当前密码" />
+            </el-form-item>
             <el-form-item label="新密码">
               <el-input v-model="security.newPassword" type="password" show-password placeholder="至少 8 位" />
             </el-form-item>
@@ -171,10 +280,17 @@ async function handleLogout() {
           <p class="content-desc">公司信息会展示在每个职位的招聘详情页，企业认证通过后可被更多求职者看到。</p>
           <el-form label-width="100px" class="profile-form">
             <el-form-item label="公司名">
-              <el-input v-model="company.name" />
+              <el-input v-model="company.name" placeholder="请输入公司名" />
             </el-form-item>
             <el-form-item label="行业">
-              <el-input v-model="company.industry" placeholder="例如：互联网 / 金融" />
+              <el-select v-model="company.industryId" placeholder="请选择行业" clearable filterable>
+                <el-option
+                  v-for="i in industries"
+                  :key="i.id"
+                  :label="i.name"
+                  :value="i.id"
+                />
+              </el-select>
             </el-form-item>
             <el-form-item label="规模">
               <el-input v-model="company.scale" placeholder="例如：100-500 人" />
@@ -183,9 +299,12 @@ async function handleLogout() {
               <el-input v-model="company.description" type="textarea" :rows="4" />
             </el-form-item>
             <el-form-item label="认证状态">
-              <el-tag :type="company.authStatus === 'VERIFIED' ? 'success' : 'warning'">
-                {{ company.authStatus === 'VERIFIED' ? '已认证' : '认证中' }}
+              <el-tag :type="company.authStatus === 'VERIFIED' ? 'success' : company.authStatus === 'REJECTED' ? 'danger' : 'warning'">
+                {{ company.authStatus === 'VERIFIED' ? '已认证' : company.authStatus === 'REJECTED' ? '已驳回' : '认证中' }}
               </el-tag>
+            </el-form-item>
+            <el-form-item v-if="company.authStatus === 'REJECTED' && company.authNote">
+              <el-alert :title="`驳回理由：${company.authNote}`" type="error" :closable="false" />
             </el-form-item>
             <el-form-item>
               <el-button type="primary" @click="saveCompany">保存</el-button>

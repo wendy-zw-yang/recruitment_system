@@ -39,9 +39,16 @@ public interface JobService {
     /** HR 端按 3 个 tab 分页查询（DRAFT / ONLINE / OFFLINE）。 */
     IPage<JobDto> listMineByTab(Long hrUserId, String tab, int pageNum, int pageSize);
 
-    /** 候选人端分页查询（仅 ONLINE） */
-    IPage<JobDto> listForCandidate(String keyword, Long industryId, Long cityId, String province, String sort,
-                                   int pageNum, int pageSize);
+    /**
+     * 候选人端分页查询（仅 ONLINE）。
+     *
+     * @param candidateId  当前候选人 userId（nullable，匿名访问时为 null；非 null 时会填充 favorited 字段）
+     * @param favoritedOnly true = 仅查询当前候选人收藏的职位（SQL 层 INNER JOIN 收藏表）
+     * @param cityName      按城市名（dict_city.name）过滤；用于首页搜索栏的"城市"文本输入
+     */
+    IPage<JobDto> listForCandidate(String keyword, Long industryId, Long cityId, String province,
+                                   String cityName, Boolean favoritedOnly, Long candidateId,
+                                   String sort, int pageNum, int pageSize);
 
     /** UC-11 候选人收藏/取消收藏 */
     boolean toggleFavorite(Long candidateId, Long jobId);

@@ -1,28 +1,136 @@
 <script setup>
-import { ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { onMounted, ref, computed, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { useApplicationStore } from '@/stores/useApplicationStore'
+import { jobApi } from '@/api/job'
+import JobListCard from '@/views/common/JobListCard.vue'
 
 const router = useRouter()
+const route = useRoute()
+const applicationStore = useApplicationStore()
+
 const searchKeyword = ref('')
 const searchLocation = ref('')
 
 const hotCities = ['北京', '上海', '广州', '深圳', '杭州', '成都', '南京', '武汉']
 
+/**
+ * 候选人首页 quick action 简化为 2 项：
+ * 「简历」与「消息」已通过顶部 bar 始终可达，无需在首页重复展示。
+ * 留下的 2 个聚焦「投递工作流」核心 CTA：发现岗位 + 跟踪投递。
+ */
 const quickActions = [
-  { icon: '📄', title: '完善简历', desc: '让企业主动找到你', to: '/resume' },
   { icon: '🔍', title: '浏览职位', desc: '发现匹配的机会', to: '/jobs' },
-  { icon: '💬', title: '消息中心', desc: '查看 HR 回复与邀请', to: '/home#messages' }
+  { icon: '📮', title: '我的投递', desc: '查看投递进度与回复', to: '/applications/mine' }
 ]
 
-const stats = [
-  { label: '已投递', value: '—' },
-  { label: '被查看', value: '—' },
-  { label: '面试邀请', value: '—' }
-]
+/**
+ * "我的投递（X 条）" 提示。
+ * 优先用 store.total（准确），fallback 到 records 长度。
+ */
+const myApplicationsTotal = computed(() =>
+  applicationStore.myApplicationsTotal || applicationStore.myApplications.length)
+
+/**
+ * 按状态统计。
+ *
+ * v0.5 用户反馈："面试邀请" 仅表示 HR 主动发起面试邀请（INTERVIEWING）；
+ * OFFERED 是面试通过后发 offer 的状态，单独维度（这里不展开计数）。
+ *
+ * 注：「面试邀请」原误把 OFFERED 计入，导致 HR 把状态推到 OFFERED 后仍显示「面试邀请：1」，
+ * 语义不符。现严格按 INTERVIEWING 计数。
+ *
+ * 返回值仅供「我的投递」section 顶部 hint 使用，不展示为大卡片（用户要求"不要那么显眼"）。
+ */
+const stats = computed(() => {
+  const apps = applicationStore.myApplications
+  return {
+    total: myApplicationsTotal.value,
+    pendingReview: apps.filter(a => a.status === 'PENDING_REVIEW').length,
+    interviewing: apps.filter(a => a.status === 'INTERVIEWING').length,
+    withdrawn: apps.filter(a => a.status === 'WITHDRAWN').length
+  }
+})
+
+/**
+ * 最近 3 条投递（按状态时间排序在 store fetch 时已是 appliedAt DESC）。
+ * 若没数据，section 显示空状态。
+ */
+const recentApplications = computed(() => applicationStore.myApplications.slice(0, 3))
+
+/** 推荐职位（取最新 5 条 ONLINE 职位） */
+const recommendedJobs = ref([])
+const recommendedTotal = ref(0)
+const jobsLoading = ref(false)
+
+async function loadRecommended() {
+  jobsLoading.value = true
+  try {
+    const page = await jobApi.list({ sort: 'newest', pageNum: 1, pageSize: 5 })
+    recommendedJobs.value = page?.records || []
+    recommendedTotal.value = page?.total || 0
+  } catch (e) {
+    console.warn('CandidateHome recommended jobs load failed:', e)
+  } finally {
+    jobsLoading.value = false
+  }
+}
+
+function goJobDetail(job) {
+  router.push(`/jobs/${job.id}`)
+}
+
+const STATUS_LABEL = {
+  PENDING_REVIEW: '待 HR 查看',
+  RESUME_PASSED: '简历通过',
+  INTERVIEWING: '面试中',
+  OFFERED: '已发 Offer',
+  HIRED: '已入职',
+  REJECTED: '已拒绝',
+  WITHDRAWN: '已撤回'
+}
+function statusLabel(s) { return STATUS_LABEL[s] || s }
 
 function doSearch() {
-  router.push({ path: '/home', query: { q: searchKeyword.value, city: searchLocation.value } })
+  // 跳职位列表并带上搜索词 + 城市（JobBrowse onMounted 会读这两个参数初始化筛选）
+  const q = {}
+  if (searchKeyword.value?.trim()) q.keyword = searchKeyword.value.trim()
+  if (searchLocation.value?.trim()) q.cityName = searchLocation.value.trim()
+  router.push({ path: '/jobs', query: q })
 }
+
+function goDetail(item) {
+  router.push(`/applications/${item.id}`)
+}
+
+async function refreshData() {
+  // 静默失败（未登录 / 网络错误都不影响首页渲染）
+  try {
+    await Promise.all([
+      applicationStore.fetchMine(1, 100),
+      loadRecommended()
+    ])
+  } catch (e) {
+    // ignore
+  }
+}
+
+onMounted(refreshData)
+
+/**
+ * v0.5 修复：候选人首页 stats 不同步。
+ *
+ * 原因：Vue Router 在跳转回 /home 时若命中同一个路由组件，onMounted 不会重跑，
+ * 导致 stats 仍是上次加载时的快照。
+ *
+ * 修复：监听 route.path，进入 /home 时强制刷新数据（包括"已投递/待 HR 查看/面试邀请/已撤回"统计）。
+ */
+watch(
+  () => route.path,
+  (newPath) => {
+    if (newPath === '/home') refreshData()
+  }
+)
 </script>
 
 <template>
@@ -58,26 +166,81 @@ function doSearch() {
       </div>
     </section>
 
-    <section class="stats">
-      <div class="stat-card" v-for="s in stats" :key="s.label">
-        <span class="stat-card__value">{{ s.value }}</span>
-        <span class="stat-card__label">{{ s.label }}</span>
-      </div>
-    </section>
+    <!-- v0.5：移除独立的 stats 大卡片块（用户原话："不要那么显眼"）。
+         状态计数改嵌入下方「我的投递」section 顶部 hint，仅文字展示 -->
 
     <section class="panel recommended-panel">
       <div class="panel-head">
         <div class="panel-title">
           <h2>推荐职位</h2>
-          <span class="hint">按你的简历与偏好智能匹配</span>
+          <span class="hint">最新在线岗位 · 来自 HR 发布</span>
         </div>
-        <el-button text type="primary" @click="router.push('/home#jobs')">查看更多 →</el-button>
+        <el-button text type="primary" @click="router.push('/jobs')">查看更多 →</el-button>
       </div>
-      <div class="empty-state">
+
+      <div v-if="jobsLoading" class="loading">加载中…</div>
+
+      <div v-else-if="recommendedJobs.length === 0" class="empty-state">
         <div class="empty-state__icon">🔍</div>
-        <h3 class="empty-state__title">完善简历后获取专属推荐</h3>
-        <p class="empty-state__desc">上传简历后，平台会基于你的经历与偏好为你匹配合适的职位</p>
-        <el-button type="primary" @click="router.push('/resume')">去完善简历</el-button>
+        <h3 class="empty-state__title">还没有在线职位</h3>
+        <p class="empty-state__desc">HR 暂未发布任何职位；你可以先去<a class="link" @click="router.push('/resume')">完善简历</a>，新职位上线后会优先看到</p>
+      </div>
+
+      <div v-else class="job-list">
+        <JobListCard
+          v-for="job in recommendedJobs"
+          :key="job.id"
+          :job="job"
+          :show-actions="false"
+          @detail="goJobDetail"
+        />
+      </div>
+    </section>
+
+    <section class="panel applications-panel">
+      <div class="panel-head">
+        <div class="panel-title">
+          <h2>我的投递</h2>
+          <span class="hint">
+            共 {{ stats.total }} 条 ·
+            待 HR 查看 <strong>{{ stats.pendingReview }}</strong> ·
+            面试邀请 <strong>{{ stats.interviewing }}</strong> ·
+            已撤回 <strong>{{ stats.withdrawn }}</strong>
+          </span>
+        </div>
+        <el-button text type="primary" @click="router.push('/applications/mine')">查看全部 →</el-button>
+      </div>
+
+      <div v-if="recentApplications.length === 0" class="empty-state">
+        <div class="empty-state__icon">📮</div>
+        <h3 class="empty-state__title">还没有投递记录</h3>
+        <p class="empty-state__desc">浏览职位并投递后，进度、面试邀请与 HR 回复都会汇总到这里</p>
+        <el-button type="primary" @click="router.push('/jobs')">去浏览职位</el-button>
+      </div>
+
+      <div v-else class="app-list">
+        <div
+          v-for="item in recentApplications"
+          :key="item.id"
+          class="app-row"
+          :class="{ 'app-row--withdrawn': item.withdrawn }"
+          @click="goDetail(item)"
+        >
+          <div class="app-main">
+            <h3 class="job-title">{{ item.jobTitle || '—' }}</h3>
+            <p class="meta">
+              <span>{{ item.companyName || '—' }}</span>
+              <span class="dot">·</span>
+              <span>{{ item.appliedAt?.slice(0, 10) || '—' }}</span>
+            </p>
+          </div>
+          <div class="app-aside">
+            <!-- v0.5：候选人侧不展示 AI 评分（详见 AI集成.md §6.4.3） -->
+            <el-tag :type="item.withdrawn ? 'info' : 'primary'" size="default">
+              {{ statusLabel(item.status) }}
+            </el-tag>
+          </div>
+        </div>
       </div>
     </section>
 
@@ -202,7 +365,7 @@ function doSearch() {
 
 .card-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(2, 1fr);
   gap: 16px;
 }
 
@@ -250,35 +413,7 @@ function doSearch() {
   color: var(--text-soft);
 }
 
-.stats {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 16px;
-  margin-bottom: 32px;
-}
-
-.stat-card {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  padding: 22px;
-  border-radius: 16px;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(244, 248, 253, 0.6));
-  border: 1px solid var(--line);
-}
-
-.stat-card__value {
-  font-size: 32px;
-  font-weight: 700;
-  color: var(--primary-deep);
-  line-height: 1.2;
-}
-
-.stat-card__label {
-  margin-top: 4px;
-  font-size: 13px;
-  color: var(--text-soft);
-}
+/* v0.5：候选人首页 stats 大卡片样式已移除（数据改嵌入「我的投递」section hint）。 */
 
 .panel {
   padding: 24px;
@@ -306,6 +441,11 @@ function doSearch() {
 .hint {
   font-size: 13px;
   color: var(--text-soft);
+}
+.hint strong {
+  color: var(--primary-deep);
+  font-weight: 600;
+  margin: 0 2px;
 }
 
 .empty-state {
@@ -372,8 +512,36 @@ function doSearch() {
   .card-grid {
     grid-template-columns: 1fr;
   }
-  .stats {
-    grid-template-columns: 1fr;
-  }
 }
+
+.app-list { display: flex; flex-direction: column; gap: 10px; }
+.app-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 18px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.18s ease;
+}
+.app-row:hover { border-color: var(--primary); transform: translateY(-1px); }
+.app-row--withdrawn { opacity: 0.6; }
+.app-main { flex: 1; min-width: 0; }
+.job-title { font-size: 15px; font-weight: 600; color: var(--text); margin: 0 0 4px; }
+.meta { font-size: 12px; color: var(--text-soft); margin: 0; display: flex; gap: 6px; }
+.meta .dot { color: var(--text-muted); }
+.app-aside { display: flex; gap: 6px; flex-shrink: 0; }
+
+.job-list { display: flex; flex-direction: column; gap: 10px; }
+.loading {
+  padding: 32px 24px;
+  text-align: center;
+  color: var(--text-soft);
+  font-size: 13px;
+}
+.link { color: var(--primary); cursor: pointer; text-decoration: none; }
+.link:hover { text-decoration: underline; }
 </style>

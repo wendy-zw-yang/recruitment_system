@@ -27,7 +27,11 @@ function onDetail() {
 </script>
 
 <template>
-  <div class="job-card" :class="{ 'job-card--favorited': job.favorited }" @click="onDetail">
+  <!--
+    v0.5：去除整卡片 @click 跳转，避免用户误触或与"返回/清除筛选"等行为冲突。
+    现在只有"查看详情"按钮是显式跳转入口；收藏星标单独处理；卡片其它区域悬停仅做高亮。
+  -->
+  <div class="job-card" :class="{ 'job-card--favorited': job.favorited }">
     <div class="job-card__main">
       <div class="title-row">
         <h3 class="title">{{ job.title }}</h3>
@@ -59,7 +63,6 @@ function onDetail() {
   border-radius: 14px;
   background: var(--panel-strong);
   border: 1px solid var(--line);
-  cursor: pointer;
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 .job-card:hover {

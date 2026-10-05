@@ -116,10 +116,18 @@ public class JobController {
                                        @RequestParam(required = false) Long industryId,
                                        @RequestParam(required = false) Long cityId,
                                        @RequestParam(required = false) String province,
+                                       @RequestParam(required = false) String cityName,
+                                       @RequestParam(required = false) Boolean favoritedOnly,
                                        @RequestParam(required = false) String sort,
                                        @RequestParam(defaultValue = "1") Integer pageNum,
                                        @RequestParam(defaultValue = "10") Integer pageSize) {
-        return Result.success(jobService.listForCandidate(keyword, industryId, cityId, province, sort, pageNum, pageSize));
+        // 匿名用户也能浏览，但只有候选人才能填充 favorited / 触发 favoritedOnly
+        Long requesterId = CurrentUserContext.getUserId();
+        String role = CurrentUserContext.getRole();
+        Long candidateId = "CANDIDATE".equals(role) ? requesterId : null;
+        return Result.success(jobService.listForCandidate(
+                keyword, industryId, cityId, province, cityName,
+                favoritedOnly, candidateId, sort, pageNum, pageSize));
     }
 
     @GetMapping("/{id}")

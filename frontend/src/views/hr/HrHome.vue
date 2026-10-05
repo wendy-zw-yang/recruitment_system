@@ -1,30 +1,152 @@
 <script setup>
-import { ElMessage } from 'element-plus'
-import { useRouter } from 'vue-router'
+import { onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { jobApi } from '@/api/job'
+import { applicationApi } from '@/api/application'
+import JobListCard from '@/views/common/JobListCard.vue'
 
+const route = useRoute()
 const router = useRouter()
-
-function comingSoon() {
-  ElMessage.info('该功能即将上线')
-}
 
 function goPublish() {
   router.push('/hr/jobs?create=1')
 }
 
+function goInbox() {
+  router.push('/hr/applications')
+}
+
+/** HR 端首页「我发布的职位」：仅展示 ONLINE，按用户要求不显示状态。 */
+const onlineJobs = ref([])
+const onlineJobsTotal = ref(0)
+const jobsLoading = ref(false)
+
+/** HR 端首页「近期收到的候选人」：跨职位聚合最新 5 条（按 AI 评分排序）。 */
+const recentCandidates = ref([])
+const recentCandidatesTotal = ref(0)
+const recentLoading = ref(false)
+
+/** HR 端首页 hero 指标。 */
+const stats = ref({
+  onlineJobs: 0,
+  receivedResumes: 0,
+  unreadMessages: 0
+})
+
+async function loadStats() {
+  // 三类数据并发拉：在线职位数 + 收到简历数 + 未读消息数（§5 消息中心未上线，固定 0）
+  try {
+    const [jobsRes, appsRes] = await Promise.all([
+      jobApi.listMine({ status: 'ONLINE', pageNum: 1, pageSize: 1 }),
+      applicationApi.hrList({ jobId: null, status: 'ACTIVE', pageNum: 1, pageSize: 1 })
+    ])
+    stats.value.onlineJobs = jobsRes?.total || 0
+    stats.value.receivedResumes = appsRes?.total || 0
+    stats.value.unreadMessages = 0  // §5 消息中心上线后接入
+  } catch (e) {
+    console.warn('HrHome stats load failed:', e)
+  }
+}
+
+async function loadOnlineJobs() {
+  jobsLoading.value = true
+  try {
+    const page = await jobApi.listMine({ status: 'ONLINE', pageNum: 1, pageSize: 5 })
+    onlineJobs.value = page?.records || []
+    onlineJobsTotal.value = page?.total || 0
+  } catch (e) {
+    console.warn('HrHome online jobs load failed:', e)
+  } finally {
+    jobsLoading.value = false
+  }
+}
+
+async function loadRecentCandidates() {
+  recentLoading.value = true
+  try {
+    const page = await applicationApi.hrList({
+      jobId: null, status: 'ACTIVE', sort: 'applied_desc', pageNum: 1, pageSize: 5
+    })
+    recentCandidates.value = page?.records || []
+    recentCandidatesTotal.value = page?.total || 0
+  } catch (e) {
+    console.warn('HrHome recent candidates load failed:', e)
+  } finally {
+    recentLoading.value = false
+  }
+}
+
+async function refreshData() {
+  // 静默失败，不阻塞首页
+  try {
+    await Promise.all([loadStats(), loadOnlineJobs(), loadRecentCandidates()])
+  } catch (e) {
+    // ignore
+  }
+}
+
+function goJobDetail(job) {
+  // HR 在首页点职位卡 → 跳该职位的收件箱
+  router.push(`/hr/applications?jobId=${job.id}`)
+}
+
+function goCandidateDetail(app) {
+  router.push(`/hr/applications/${app.id}`)
+}
+
 const quickActions = [
   { icon: '+', title: '发布新职位', action: 'publish' },
-  { icon: '📥', title: '收到的简历', action: 'coming' },
-  { icon: '🔍', title: '搜索人才', action: 'coming' },
-  { icon: '💬', title: '消息中心', action: 'coming' }
+  { icon: '📥', title: '简历收件箱', action: 'inbox' },
+  { icon: '🔍', title: '搜索人才', disabled: true },
+  { icon: '💬', title: '消息中心', disabled: true }
 ]
 
-const stats = [
-  { label: '在线职位', value: '—' },
-  { label: '收到简历', value: '—' },
-  { label: '今日新增', value: '—' },
-  { label: '未读消息', value: '—' }
-]
+function onQuick(action) {
+  if (action === 'publish') return goPublish()
+  if (action === 'inbox') return goInbox()
+}
+
+const STATUS_TYPE = {
+  PENDING_REVIEW: 'info',
+  VIEWED_BY_HR: '',
+  RESUME_PASSED: 'primary',
+  INTERVIEWING: 'warning',
+  OFFERED: 'success',
+  HIRED: 'success',
+  REJECTED: 'danger',
+  WITHDRAWN: 'info'
+}
+const STATUS_LABEL = {
+  PENDING_REVIEW: '待查看',
+  VIEWED_BY_HR: '已查看',
+  RESUME_PASSED: '简历通过',
+  INTERVIEWING: '面试中',
+  OFFERED: '已发 Offer',
+  HIRED: '已入职',
+  REJECTED: '已拒绝',
+  WITHDRAWN: '已撤回'
+}
+function statusLabel(s) { return STATUS_LABEL[s] || s }
+function statusType(s) { return STATUS_TYPE[s] || 'info' }
+
+/**
+ * 评分圆圈颜色：高分绿、中分蓝、低分灰、待评分 = 描边虚线
+ */
+function scoreColor(score) {
+  if (score == null) return 'var(--text-muted)'
+  if (score >= 80) return '#22c55e'   // 绿
+  if (score >= 60) return '#3b82f6'   // 蓝
+  return '#94a3b8'                    // 灰
+}
+
+onMounted(refreshData)
+
+/**
+ * v0.5 修复：HR 首页 /home 切换时强制刷新（解决"上线职位后首页不显示"等不同步问题）。
+ */
+watch(() => route.path, (newPath) => {
+  if (newPath === '/home') refreshData()
+})
 </script>
 
 <template>
@@ -38,9 +160,17 @@ const stats = [
           <p class="hero__subtitle">集中处理职位、简历与候选人沟通，把时间花在判断而非整理上</p>
         </div>
         <div class="hero__metric">
-          <div class="metric-item" v-for="s in stats" :key="s.label">
-            <span class="metric-num">{{ s.value }}</span>
-            <span class="metric-label">{{ s.label }}</span>
+          <div class="metric-item">
+            <span class="metric-num">{{ stats.onlineJobs }}</span>
+            <span class="metric-label">在线职位</span>
+          </div>
+          <div class="metric-item">
+            <span class="metric-num">{{ stats.receivedResumes }}</span>
+            <span class="metric-label">收到简历</span>
+          </div>
+          <div class="metric-item">
+            <span class="metric-num">{{ stats.unreadMessages }}</span>
+            <span class="metric-label">未读消息</span>
           </div>
         </div>
       </div>
@@ -52,8 +182,9 @@ const stats = [
           v-for="(item, idx) in quickActions"
           :key="idx"
           class="quick-btn"
-          :class="{ 'quick-btn--primary': idx === 0 }"
-          @click="item.action === 'publish' ? goPublish() : comingSoon()"
+          :class="{ 'quick-btn--primary': idx === 0, 'quick-btn--disabled': item.disabled }"
+          :disabled="item.disabled"
+          @click="onQuick(item.action)"
         >
           <span class="quick-btn__icon">{{ item.icon }}</span>
           <span class="quick-btn__title">{{ item.title }}</span>
@@ -66,14 +197,41 @@ const stats = [
         <div class="panel-head">
           <div class="panel-title">
             <h2>近期收到的候选人</h2>
-            <span class="hint">按投递时间倒序，匹配度由简历自动评估</span>
+            <span class="hint">共 {{ recentCandidatesTotal }} 份投递 · 按投递时间倒序</span>
           </div>
+          <el-button text type="primary" @click="goInbox()">查看全部 →</el-button>
         </div>
-        <div class="empty-state">
+
+        <div v-if="recentLoading" class="loading">加载中…</div>
+
+        <div v-else-if="recentCandidates.length === 0" class="empty-state">
           <div class="empty-state__icon">📭</div>
           <h3 class="empty-state__title">暂无候选人投递</h3>
-          <p class="empty-state__desc">发布职位后，候选人的投递将自动汇总到这里，按匹配度排序展示</p>
+          <p class="empty-state__desc">发布职位后，候选人的投递将自动汇总到简历收件箱，按匹配度排序展示</p>
           <el-button type="primary" @click="goPublish()">去发布职位</el-button>
+        </div>
+
+        <div v-else class="cand-list">
+          <div
+            v-for="c in recentCandidates"
+            :key="c.id"
+            class="cand-row"
+            @click="goCandidateDetail(c)"
+          >
+            <div class="cand-score" :style="{ borderColor: scoreColor(c.aiScore) }">
+              <span v-if="c.aiScore != null" class="cand-score__num">{{ c.aiScore }}</span>
+              <span v-else class="cand-score__pending">—</span>
+              <span class="cand-score__label">匹配度</span>
+            </div>
+            <div class="cand-main">
+              <h3 class="cand-name">{{ c.candidateName || '候选人' }}</h3>
+              <p class="cand-job">投递：{{ c.jobTitle || '—' }} · {{ c.companyName || '—' }}</p>
+              <p class="cand-time">{{ c.appliedAt?.slice(0, 16).replace('T', ' ') || '—' }}</p>
+            </div>
+            <el-tag :type="statusType(c.status)" size="default" effect="plain">
+              {{ statusLabel(c.status) }}
+            </el-tag>
+          </div>
         </div>
       </section>
 
@@ -93,15 +251,28 @@ const stats = [
       <div class="panel-head">
         <div class="panel-title">
           <h2>我发布的职位</h2>
-          <span class="hint">点击职位可查看投递列表与状态</span>
+          <span class="hint">共 {{ onlineJobsTotal }} 个在线职位 · 点击查看投递列表</span>
         </div>
-        <el-button type="primary" @click="goPublish()">+ 发布新职位</el-button>
+        <el-button text type="primary" @click="router.push('/hr/jobs')">管理全部 →</el-button>
       </div>
-      <div class="empty-state">
+
+      <div v-if="jobsLoading" class="loading">加载中…</div>
+
+      <div v-else-if="onlineJobs.length === 0" class="empty-state">
         <div class="empty-state__icon">📋</div>
-        <h3 class="empty-state__title">还没有发布职位</h3>
-        <p class="empty-state__desc">发布职位后，候选人可以搜索并投递；这里会展示所有你发布的职位与状态</p>
+        <h3 class="empty-state__title">还没有在线职位</h3>
+        <p class="empty-state__desc">前往「职位管理」发布并上线职位后，这里会展示所有在招岗位</p>
         <el-button type="primary" @click="goPublish()">立即发布</el-button>
+      </div>
+
+      <div v-else class="job-list">
+        <JobListCard
+          v-for="job in onlineJobs"
+          :key="job.id"
+          :job="job"
+          :show-actions="false"
+          @detail="goJobDetail"
+        />
       </div>
     </section>
 
@@ -349,6 +520,71 @@ const stats = [
 
 .tips-panel .tip:last-child {
   margin-bottom: 0;
+}
+
+.loading {
+  padding: 32px 24px;
+  text-align: center;
+  color: var(--text-soft);
+  font-size: 13px;
+}
+
+.job-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* v0.5：候选人行（HR 首页） */
+.cand-list { display: flex; flex-direction: column; gap: 10px; }
+.cand-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 14px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.18s ease;
+}
+.cand-row:hover {
+  border-color: var(--primary);
+  transform: translateY(-1px);
+}
+.cand-score {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  border: 3px solid;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  background: var(--panel-strong);
+}
+.cand-score__num { font-size: 18px; font-weight: 700; line-height: 1; }
+.cand-score__pending { font-size: 18px; color: var(--text-muted); line-height: 1; }
+.cand-score__label { font-size: 10px; color: var(--text-muted); margin-top: 2px; }
+
+.cand-main { flex: 1; min-width: 0; }
+.cand-name { font-size: 15px; font-weight: 600; color: var(--text); margin: 0 0 4px; }
+.cand-job { font-size: 12px; color: var(--text-soft); margin: 0 0 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cand-time { font-size: 11px; color: var(--text-muted); margin: 0; }
+
+/* v0.5：disabled quick action */
+.quick-btn--disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background: var(--bg);
+  color: var(--text-muted);
+}
+.quick-btn--disabled:hover {
+  background: var(--bg);
+  border-color: var(--line);
+  color: var(--text-muted);
+  transform: none;
 }
 
 .footer {

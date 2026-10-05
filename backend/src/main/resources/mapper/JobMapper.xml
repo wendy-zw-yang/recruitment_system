@@ -23,30 +23,67 @@
         <result property="isDeleted" column="is_deleted"/>
     </resultMap>
 
+    <!--
+        候选人端职位分页查询（仅 ONLINE）。
+        v0.5 新增：cityName（城市名文本搜索）+ favoritedOnly（只看我收藏的）。
+        favoritedOnly=true 时必须传 candidateId，SQL 会 INNER JOIN favorite_job。
+    -->
     <select id="selectPageForCandidate" resultMap="JobMap">
-        SELECT *
-        FROM job
-        WHERE is_deleted = 0
-          AND status = 'ONLINE'
+        SELECT j.*
+        FROM job j
+        WHERE j.is_deleted = 0
+          AND j.status = 'ONLINE'
           <!-- v0.4 修订：取消 audit_status 过滤（无审核流） -->
           <if test="keyword != null and keyword != ''">
-              AND (title LIKE CONCAT('%', #{keyword}, '%')
-                   OR description LIKE CONCAT('%', #{keyword}, '%'))
+              AND (j.title LIKE CONCAT('%', #{keyword}, '%')
+                   OR j.description LIKE CONCAT('%', #{keyword}, '%'))
           </if>
           <if test="industryId != null">
-              AND industry_id = #{industryId}
+              AND j.industry_id = #{industryId}
           </if>
           <if test="cityId != null">
-              AND city_id = #{cityId}
+              AND j.city_id = #{cityId}
           </if>
           <if test="province != null and province != ''">
-              AND province = #{province}
+              AND j.province = #{province}
+          </if>
+          <!-- v0.5 新增：按城市名（dict_city.name）过滤 -->
+          <if test="cityName != null and cityName != ''">
+              AND j.city_id IN (
+                  SELECT id FROM dict_city
+                  WHERE name = #{cityName} AND is_deleted = 0
+              )
+          </if>
+          <!-- v0.5 新增：只看我收藏的 -->
+          <if test="favoritedOnly != null and favoritedOnly == true">
+              AND EXISTS (
+                  SELECT 1 FROM favorite_job f
+                  WHERE f.job_id = j.id
+                    AND f.candidate_id = #{candidateId}
+                    AND f.is_deleted = 0
+              )
           </if>
         ORDER BY
             <choose>
-                <when test="sort == 'salary'">salary_max DESC</when>
-                <otherwise>published_at DESC</otherwise>
+                <when test="sort == 'salary'">j.salary_max DESC</when>
+                <otherwise>j.published_at DESC</otherwise>
             </choose>
     </select>
 
+    <!--
+        批量查询 candidateId 收藏的 jobId 列表。
+        用于 listForCandidate 二次填充 favorited 字段，避免前端 toggleFavorite 后刷新状态丢失。
+    -->
+    <select id="selectFavoriteJobIds" resultType="java.lang.Long">
+        SELECT job_id
+        FROM favorite_job
+        WHERE candidate_id = #{candidateId}
+          AND is_deleted = 0
+          <if test="jobIds != null and jobIds.size() > 0">
+              AND job_id IN
+              <foreach collection="jobIds" item="jid" open="(" close=")" separator=",">
+                  #{jid}
+              </foreach>
+          </if>
+    </select>
 </mapper>

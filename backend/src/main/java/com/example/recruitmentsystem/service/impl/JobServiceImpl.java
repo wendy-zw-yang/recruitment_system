@@ -171,11 +171,23 @@ public class JobServiceImpl implements JobService {
     // ============ 候选人端 ============
 
     @Override
-    public IPage<JobDto> listForCandidate(String keyword, Long industryId, Long cityId, String province, String sort,
-                                          int pageNum, int pageSize) {
+    public IPage<JobDto> listForCandidate(String keyword, Long industryId, Long cityId, String province,
+                                          String cityName, Boolean favoritedOnly, Long candidateId,
+                                          String sort, int pageNum, int pageSize) {
         Page<Job> page = new Page<>(pageNum, pageSize);
-        IPage<Job> raw = jobMapper.selectPageForCandidate(page, keyword, industryId, cityId, province, sort);
-        return raw.convert(this::enrich);
+        IPage<Job> raw = jobMapper.selectPageForCandidate(
+                page, keyword, industryId, cityId, province, cityName, favoritedOnly, candidateId, sort);
+        IPage<JobDto> dtos = raw.convert(this::enrich);
+        // 候选人访问时，批量填充 favorited 字段（避免 toggleFavorite 后刷新丢失状态）
+        if (candidateId != null && dtos.getRecords() != null && !dtos.getRecords().isEmpty()) {
+            List<Long> jobIds = dtos.getRecords().stream().map(JobDto::getId).collect(Collectors.toList());
+            List<Long> favIds = jobMapper.selectFavoriteJobIds(candidateId, jobIds);
+            java.util.Set<Long> favSet = new java.util.HashSet<>(favIds);
+            for (JobDto dto : dtos.getRecords()) {
+                dto.setFavorited(favSet.contains(dto.getId()));
+            }
+        }
+        return dtos;
     }
 
     @Override

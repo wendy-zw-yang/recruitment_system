@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { jobApi } from '@/api/job'
 import { useAuthStore } from '@/stores/useAuthStore'
+import ApplyConfirmDialog from '@/views/candidate/ApplyConfirmDialog.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -12,6 +13,7 @@ const auth = useAuthStore()
 const job = ref(null)
 const loading = ref(true)
 const favoriteBusy = ref(false)
+const applyDialogOpen = ref(false)
 
 const salaryText = computed(() => {
   if (!job.value) return ''
@@ -51,7 +53,25 @@ async function onFavorite() {
 }
 
 function onApply() {
-  ElMessage.info('投递功能即将上线')
+  if (!auth.isLoggedIn) {
+    ElMessage.warning('请先登录')
+    router.push({ name: 'login', query: { redirect: route.fullPath } })
+    return
+  }
+  if (!auth.isCandidate) {
+    ElMessage.warning('仅候选人可投递')
+    return
+  }
+  applyDialogOpen.value = true
+}
+
+/**
+ * 顶部"← 返回职位列表"：跳到 /jobs 无 query 参数，清除所有搜索/筛选条件。
+ * 不要用 router.back()：上一页面可能带 keyword/cityName/favorited 等参数，
+ * 会回到搜索后的列表而非干净的职位列表入口。
+ */
+function goBackToList() {
+  router.push({ path: '/jobs', query: {} })
 }
 
 onMounted(loadDetail)
@@ -59,7 +79,7 @@ onMounted(loadDetail)
 
 <template>
   <div class="page-shell job-detail">
-    <div class="back" @click="router.push('/jobs')">← 返回职位列表</div>
+    <div class="back" @click="goBackToList">← 返回职位列表</div>
 
     <div v-if="loading" class="loading">加载中…</div>
     <div v-else-if="!job" class="loading">职位不存在或已下线</div>
@@ -106,6 +126,8 @@ onMounted(loadDetail)
         <p class="content company-line">{{ job.companyName || '—' }}</p>
       </div>
     </template>
+
+    <ApplyConfirmDialog v-if="job" v-model="applyDialogOpen" :job="job" />
   </div>
 </template>
 

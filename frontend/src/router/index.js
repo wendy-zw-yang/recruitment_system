@@ -10,6 +10,12 @@ const routes = [
   { path: '/resume', name: 'resume', component: () => import('@/views/candidate/ResumeEdit.vue'), meta: { roles: ['CANDIDATE'] } },
   { path: '/jobs', name: 'jobs', component: () => import('@/views/candidate/JobBrowse.vue') },
   { path: '/jobs/:id', name: 'job-detail', component: () => import('@/views/candidate/JobDetail.vue') },
+  // §4 投递模块：候选人端
+  { path: '/applications/mine', name: 'my-applications', component: () => import('@/views/candidate/MyApplications.vue'), meta: { roles: ['CANDIDATE'] } },
+  { path: '/applications/:id', name: 'application-detail', component: () => import('@/views/candidate/ApplicationDetail.vue'), meta: { roles: ['CANDIDATE', 'HR', 'ADMIN'] } },
+  // §4 投递模块：HR 端
+  { path: '/hr/applications', name: 'hr-applications', component: () => import('@/views/hr/ApplicationInbox.vue'), meta: { roles: ['HR'] } },
+  { path: '/hr/applications/:id', name: 'hr-application-detail', component: () => import('@/views/hr/ApplicationDetail.vue'), meta: { roles: ['HR'] } },
   { path: '/hr/jobs', name: 'hr-jobs', component: () => import('@/views/hr/JobManage.vue'), meta: { roles: ['HR'] } },
   // §9 管理员审核（v0.4：UC-35 职位审核删除）
   { path: '/admin/users/audit', name: 'admin-users-audit', component: () => import('@/views/admin/UserAudit.vue'), meta: { roles: ['ADMIN'] } },

@@ -1,14 +1,17 @@
 <script setup>
-import { onMounted, reactive, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { onMounted, reactive, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { adminApi } from '@/api/admin'
+import { jobApi } from '@/api/job'
 
 const router = useRouter()
+const route = useRoute()
 
 const stats = reactive({
   pendingCompanies: 0,
-  totalUsers: 0
+  totalUsers: 0,
+  onlineJobs: 0
 })
 
 const quickActions = [
@@ -29,19 +32,28 @@ function comingSoon() {
 
 async function loadStats() {
   try {
-    // axios 拦截器已自动解 Result 包装，res 即 IPage<T>
-    const [usersRes, companiesRes] = await Promise.all([
-      adminApi.listUsers({ role: 'CANDIDATE', pageNum: 1, pageSize: 1 }),
-      adminApi.listCompanies({ authStatus: 'PENDING', pageNum: 1, pageSize: 1 })
+    // 并发拉三类数据：用户总数 / 待审公司数 / 在线职位数
+    // 注意：jobApi.list 仅返回 ONLINE 职位，total 即在线职位数（无需 status 参数）
+    const [usersRes, companiesRes, jobsRes] = await Promise.all([
+      // 不传 role 参数查询全量用户总数
+      adminApi.listUsers({ pageNum: 1, pageSize: 1 }),
+      adminApi.listCompanies({ authStatus: 'PENDING', pageNum: 1, pageSize: 1 }),
+      jobApi.list({ pageNum: 1, pageSize: 1 })
     ])
     stats.totalUsers = usersRes?.total || 0
     stats.pendingCompanies = companiesRes?.total || 0
+    stats.onlineJobs = jobsRes?.total || 0
   } catch (e) {
     console.warn('AdminHome stats load failed:', e)
   }
 }
 
 onMounted(loadStats)
+
+// v0.5：与 HR/候选人 首页保持一致，进入 /home 时强制刷新（解决"审核完回首页数字不变"问题）
+watch(() => route.path, (newPath) => {
+  if (newPath === '/home') loadStats()
+})
 </script>
 
 <template>
@@ -80,7 +92,7 @@ onMounted(loadStats)
     </section>
 
     <section class="stats">
-      <div class="stat-card stat-card--accent" @click="router.push('/admin/users/audit')">
+      <div class="stat-card" @click="router.push('/admin/users/audit')">
         <span class="stat-card__value">{{ stats.totalUsers }}</span>
         <span class="stat-card__label">平台用户总数</span>
         <span class="stat-card__badge">查看</span>
@@ -90,9 +102,9 @@ onMounted(loadStats)
         <span class="stat-card__label">待审公司</span>
         <span v-if="stats.pendingCompanies > 0" class="stat-card__badge">待办</span>
       </div>
-      <div class="stat-card" @click="comingSoon()">
-        <span class="stat-card__value">—</span>
-        <span class="stat-card__label">字典 / 日志</span>
+      <div class="stat-card" @click="router.push('/jobs')">
+        <span class="stat-card__value">{{ stats.onlineJobs }}</span>
+        <span class="stat-card__label">在线职位</span>
       </div>
     </section>
 

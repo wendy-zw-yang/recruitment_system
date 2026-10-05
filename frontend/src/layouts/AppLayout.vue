@@ -9,16 +9,21 @@ const router = useRouter()
 const auth = useAuthStore()
 
 const navItems = computed(() => {
-  const items = [{ label: '首页', to: '/home' }]
-  if (route.path === '/home') return items
-
+  // 顶部 bar 始终显示主要功能导航（含首页）：用户随时可从任何页面跳转任何模块，
+  // 不依赖首页 quick action（首页的 quick action 只起辅助 CTA 作用）。
+  const items = []
   if (auth.isCandidate) {
-    items.push({ label: '简历', to: '/resume' })
+    items.push({ label: '我的简历', to: '/resume' })
     items.push({ label: '职位', to: '/jobs' })
+    items.push({ label: '我的投递', to: '/applications/mine' })
     items.push({ label: '消息', placeholder: true })
   } else if (auth.isHR) {
     items.push({ label: '职位管理', to: '/hr/jobs' })
-    items.push({ label: '收到的简历', placeholder: true })
+    items.push({ label: '简历收件箱', to: '/hr/applications' })
+    items.push({ label: '消息', placeholder: true })
+  } else if (auth.isAdmin) {
+    items.push({ label: '用户管理', to: '/admin/users/audit' })
+    items.push({ label: '公司审核', to: '/admin/companies/audit' })
     items.push({ label: '消息', placeholder: true })
   }
   return items
@@ -42,11 +47,43 @@ async function logout() {
   router.push('/login')
 }
 
-// 非首页展示「返回」按钮，点击回到上级页面（浏览器历史上一页）；
-// 如果没有历史（直接进入或刷新），回到首页兜底。
+// 非首页展示「返回」按钮。
 const showBackButton = computed(() => route.path !== '/home')
 
+/**
+ * v0.5 智能返回：按当前路由分类跳转到"语义上一层"，避免浏览器 history 不稳定
+ * （例如从 /resume → /jobs → /jobs/123 → 返回 → 返回 又跳到 /resume 这种卡顿）。
+ *
+ * 规则：
+ *  - 列表页（/jobs / /applications/mine / /hr/applications） → /home（列表页是入口，"返回" = 回到门户）
+ *  - 详情页（/jobs/:id / /applications/:id / /hr/applications/:id） → 对应列表页
+ *  - 其他（/resume / /hr/jobs / /profile 等）→ router.back() 历史回退
+ *  - 历史栈 ≤1 → /home 兜底
+ */
 function goBack() {
+  const p = route.path
+
+  // 列表页 → 首页
+  if (p === '/jobs' || p === '/applications/mine' || p === '/hr/applications') {
+    router.push('/home')
+    return
+  }
+
+  // 详情页 → 对应列表
+  if (/^\/jobs\/\d+$/.test(p)) {
+    router.push('/jobs')
+    return
+  }
+  if (/^\/applications\/\d+$/.test(p)) {
+    router.push('/applications/mine')
+    return
+  }
+  if (/^\/hr\/applications\/\d+$/.test(p)) {
+    router.push('/hr/applications')
+    return
+  }
+
+  // 其他：浏览器历史回退，兜底回首页
   if (window.history.length > 1) {
     router.back()
   } else {

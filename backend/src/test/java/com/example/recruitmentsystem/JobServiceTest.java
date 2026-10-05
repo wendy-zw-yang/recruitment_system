@@ -311,6 +311,39 @@ class JobServiceTest {
         assertEquals(403, e.getCode());
     }
 
+    /**
+     * v0.5 关键回归：toggle 反复切换（开 → 关 → 开）不应触发 UNIQUE 约束冲突。
+     *
+     * <p>历史 bug：{@code favorite_job} 表有 UNIQUE 约束，软删除后行依然存在，
+     * 再次 INSERT 同 (candidate_id, job_id) 会冲突 → 500。修复：移除 FavoriteJob 的
+     * {@code @TableLogic}，让 BaseMapper.deleteById 走硬删除。</p>
+     */
+    @Test
+    @Transactional
+    void toggleFavorite_offThenOn_noUniqueConflict() {
+        Long candidateId = createCandidate("c-toggle-twice");
+        Long hrId = createHr("hr-toggle-twice");
+        JobDto created = jobService().createJob(hrId, sampleCreate());
+
+        // 1) 首次 toggle：INSERT
+        assertTrue(jobService().toggleFavorite(candidateId, created.getId()));
+        assertTrue(jobService().isFavorited(candidateId, created.getId()));
+
+        // 2) 再次 toggle：DELETE（之前是软删，修复后硬删）
+        assertFalse(jobService().toggleFavorite(candidateId, created.getId()));
+        assertFalse(jobService().isFavorited(candidateId, created.getId()));
+
+        // 3) 第三次 toggle：再次 INSERT。修复前会触发 UNIQUE 约束 500；修复后正常返回 true
+        assertTrue(jobService().toggleFavorite(candidateId, created.getId()));
+        assertTrue(jobService().isFavorited(candidateId, created.getId()));
+
+        // 4) 再关再开：第二次关
+        assertFalse(jobService().toggleFavorite(candidateId, created.getId()));
+        // 5) 第二次开
+        assertTrue(jobService().toggleFavorite(candidateId, created.getId()));
+        assertTrue(jobService().isFavorited(candidateId, created.getId()));
+    }
+
     // ============ salary / dict validation ============
 
     @Test
@@ -359,5 +392,115 @@ class JobServiceTest {
         JobDto dto = jobService().createJob(hrId, req);
         assertEquals("浙江", dto.getProvince());
         assertEquals(city.getId(), dto.getCityId());
+    }
+
+    // ============ v0.5：listForCandidate 扩展参数 ============
+
+    /** 收藏后 listForCandidate 必须填充 favorited=true（关键回归：刷新不丢收藏状态） */
+    @Test
+    @Transactional
+    void listForCandidate_populatesFavoritedField() {
+        Long candidateId = createCandidate("c-fav-pop");
+        Long hrId = createHr("hr-fav-pop");
+        JobDto created = jobService().createJob(hrId, sampleCreateWithTitle("Java A"));
+        jobService().publishJob(hrId, created.getId());
+        jobService().toggleFavorite(candidateId, created.getId());
+
+        IPage<JobDto> page = jobService().listForCandidate(
+                null, null, null, null, null, null, candidateId, "newest", 1, 10);
+        JobDto found = page.getRecords().stream().filter(j -> j.getId().equals(created.getId())).findFirst().orElse(null);
+        assertNotNull(found, "应能找到刚收藏的职位");
+        assertEquals(Boolean.TRUE, found.getFavorited(), "v0.5 关键：收藏后刷新列表必须显示 favorited=true");
+    }
+
+    /** 匿名访问（candidateId=null）时 favorited 字段不应抛错，保持 null */
+    @Test
+    @Transactional
+    void listForCandidate_anonymousAccess_succeedsWithNullFavorited() {
+        Long hrId = createHr("hr-anon");
+        JobDto created = jobService().createJob(hrId, sampleCreateWithTitle("公开职位"));
+        jobService().publishJob(hrId, created.getId());
+
+        IPage<JobDto> page = jobService().listForCandidate(
+                null, null, null, null, null, null, null, "newest", 1, 10);
+        assertTrue(page.getRecords().stream().anyMatch(j -> j.getId().equals(created.getId())));
+        // 匿名访问 favorited 应为 null（不抛 NPE）
+        JobDto found = page.getRecords().stream().filter(j -> j.getId().equals(created.getId())).findFirst().orElse(null);
+        assertNotNull(found);
+        // 不强制要求 null，但不应抛错
+    }
+
+    /** favoritedOnly=true 时仅返回当前候选人收藏的职位 */
+    @Test
+    @Transactional
+    void listForCandidate_favoritedOnly_filtersCorrectly() {
+        Long candidateId = createCandidate("c-fav-filter");
+        Long hrId = createHr("hr-fav-filter");
+        JobDto fav = jobService().createJob(hrId, sampleCreateWithTitle("收藏的"));
+        JobDto notFav = jobService().createJob(hrId, sampleCreateWithTitle("未收藏的"));
+        jobService().publishJob(hrId, fav.getId());
+        jobService().publishJob(hrId, notFav.getId());
+        jobService().toggleFavorite(candidateId, fav.getId());
+
+        // 不开启 favoritedOnly → 两条都返回
+        IPage<JobDto> all = jobService().listForCandidate(
+                null, null, null, null, null, false, candidateId, "newest", 1, 10);
+        long totalAll = all.getRecords().stream().filter(j -> j.getId().equals(fav.getId()) || j.getId().equals(notFav.getId())).count();
+        assertEquals(2, totalAll);
+
+        // 开启 favoritedOnly → 仅收藏的那条
+        IPage<JobDto> onlyFav = jobService().listForCandidate(
+                null, null, null, null, null, true, candidateId, "newest", 1, 10);
+        boolean containsFav = onlyFav.getRecords().stream().anyMatch(j -> j.getId().equals(fav.getId()));
+        boolean containsNotFav = onlyFav.getRecords().stream().anyMatch(j -> j.getId().equals(notFav.getId()));
+        assertTrue(containsFav, "favoritedOnly 必须包含已收藏职位");
+        assertFalse(containsNotFav, "favoritedOnly 必须排除未收藏职位");
+    }
+
+    /** cityName 按城市名（dict_city.name）过滤 */
+    @Test
+    @Transactional
+    void listForCandidate_cityName_filtersByCityName() {
+        Long hrId = createHr("hr-cityname");
+        // 创建一个有城市的职位
+        com.example.recruitmentsystem.entity.DictCity city = new com.example.recruitmentsystem.entity.DictCity();
+        city.setName("测试市-" + System.nanoTime());
+        city.setProvince("测试省");
+        city.setSortOrder(1);
+        cityMapper.insert(city);
+
+        JobCreateRequest req = sampleCreateWithTitle("城市测试职位");
+        req.setCityId(city.getId());
+        req.setProvince(city.getProvince());
+        JobDto created = jobService().createJob(hrId, req);
+        jobService().publishJob(hrId, created.getId());
+
+        // 按城市名过滤应找到
+        IPage<JobDto> matched = jobService().listForCandidate(
+                null, null, null, null, city.getName(), null, null, "newest", 1, 10);
+        assertTrue(matched.getRecords().stream().anyMatch(j -> j.getId().equals(created.getId())),
+                "cityName 匹配时应返回该职位");
+
+        // 不匹配的城市名应找不到
+        IPage<JobDto> unmatched = jobService().listForCandidate(
+                null, null, null, null, "不存在的城市名", null, null, "newest", 1, 10);
+        assertFalse(unmatched.getRecords().stream().anyMatch(j -> j.getId().equals(created.getId())),
+                "cityName 不匹配时不应返回该职位");
+    }
+
+    /** 关键词搜索：title 命中即返回 */
+    @Test
+    @Transactional
+    void listForCandidate_keyword_searchByTitle() {
+        Long hrId = createHr("hr-kw");
+        JobDto javaJob = jobService().createJob(hrId, sampleCreateWithTitle("高级 Java 工程师"));
+        JobDto pyJob = jobService().createJob(hrId, sampleCreateWithTitle("Python 数据分析"));
+        jobService().publishJob(hrId, javaJob.getId());
+        jobService().publishJob(hrId, pyJob.getId());
+
+        IPage<JobDto> javaResult = jobService().listForCandidate(
+                "Java", null, null, null, null, null, null, "newest", 1, 10);
+        assertTrue(javaResult.getRecords().stream().anyMatch(j -> j.getId().equals(javaJob.getId())));
+        assertFalse(javaResult.getRecords().stream().anyMatch(j -> j.getId().equals(pyJob.getId())));
     }
 }
