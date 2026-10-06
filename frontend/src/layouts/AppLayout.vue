@@ -1,13 +1,15 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAuthStore } from '@/stores/useAuthStore'
+import { useMessageStore } from '@/stores/useMessageStore'
 import ChatWidget from '@/components/ChatWidget.vue'
 
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
+const messageStore = useMessageStore()
 
 const navItems = computed(() => {
   // 顶部 bar 始终显示主要功能导航（含首页）：用户随时可从任何页面跳转任何模块，
@@ -17,11 +19,11 @@ const navItems = computed(() => {
     items.push({ label: '我的简历', to: '/resume' })
     items.push({ label: '职位', to: '/jobs' })
     items.push({ label: '我的投递', to: '/applications/mine' })
-    items.push({ label: '消息', placeholder: true })
+    items.push({ label: '消息', to: '/messages' })
   } else if (auth.isHR) {
     items.push({ label: '职位管理', to: '/hr/jobs' })
     items.push({ label: '简历收件箱', to: '/hr/applications' })
-    items.push({ label: '消息', placeholder: true })
+    items.push({ label: '消息', to: '/messages' })
   } else if (auth.isAdmin) {
     items.push({ label: '用户管理', to: '/admin/users/audit' })
     items.push({ label: '公司审核', to: '/admin/companies/audit' })
@@ -44,9 +46,30 @@ async function logout() {
   } catch {
     return
   }
+  messageStore.teardownSse()
   auth.logout()
   router.push('/login')
 }
+
+// 登录后建立 SSE；token 变更（重新登录 / 登出）时重连
+watch(
+  () => auth.token,
+  (token) => {
+    if (token) {
+      messageStore.bootstrapSse()
+      messageStore.loadUnreadStats()
+    } else {
+      messageStore.teardownSse()
+    }
+  },
+  { immediate: true }
+)
+onMounted(() => {
+  if (auth.token) {
+    messageStore.bootstrapSse()
+    messageStore.loadUnreadStats()
+  }
+})
 
 // 非首页展示「返回」按钮。
 const showBackButton = computed(() => route.path !== '/home')
@@ -110,7 +133,11 @@ function goBack() {
             :class="{ 'nav-item--active': route.path === item.to && !item.placeholder, 'nav-item--placeholder': item.placeholder }"
             @click.prevent="item.placeholder ? comingSoon() : router.push(item.to)"
           >
-            {{ item.label }}
+            <span>{{ item.label }}</span>
+            <span
+              v-if="!item.placeholder && item.label === '消息' && messageStore.totalUnread > 0"
+              class="nav-badge"
+            >{{ messageStore.totalUnread > 99 ? '99+' : messageStore.totalUnread }}</span>
           </a>
         </nav>
       </div>
@@ -233,6 +260,20 @@ function goBack() {
   font-weight: 500;
   cursor: pointer;
   transition: background 0.18s ease, color 0.18s ease;
+  position: relative;
+  gap: 4px;
+}
+.nav-badge {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 11px;
+  line-height: 18px;
+  text-align: center;
+  font-weight: 500;
 }
 
 .nav-item:hover {

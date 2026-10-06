@@ -13,6 +13,8 @@ const routes = [
   // §4 投递模块：候选人端
   { path: '/applications/mine', name: 'my-applications', component: () => import('@/views/candidate/MyApplications.vue'), meta: { roles: ['CANDIDATE'] } },
   { path: '/applications/:id', name: 'application-detail', component: () => import('@/views/candidate/ApplicationDetail.vue'), meta: { roles: ['CANDIDATE', 'HR', 'ADMIN'] } },
+  // §5 消息中心
+  { path: '/messages', name: 'messages', component: () => import('@/views/common/Chat.vue'), meta: { roles: ['CANDIDATE', 'HR'] } },
   // §4 投递模块：HR 端
   { path: '/hr/applications', name: 'hr-applications', component: () => import('@/views/hr/ApplicationInbox.vue'), meta: { roles: ['HR'] } },
   { path: '/hr/applications/:id', name: 'hr-application-detail', component: () => import('@/views/hr/ApplicationDetail.vue'), meta: { roles: ['HR'] } },

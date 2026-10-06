@@ -33,6 +33,8 @@ import com.example.recruitmentsystem.mapper.ResumeMapper;
 import com.example.recruitmentsystem.mapper.UserMapper;
 import com.example.recruitmentsystem.service.ApplicationService;
 import com.example.recruitmentsystem.service.ResumeService;
+import com.example.recruitmentsystem.service.message.MessageService;
+import com.example.recruitmentsystem.entity.User;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -57,7 +59,7 @@ import java.util.stream.Collectors;
  *   <li>投递校验：候选人 ACTIVE 简历存在 + 职位 status=ONLINE + 未重复投递（v0.3 取消 audit_status 校验）</li>
  *   <li>简历快照：{@code resume_snapshot_id} 存 ACTIVE 简历 id（FK），候选人后续编辑 / 归档不影响</li>
  *   <li>AI-2 异步：{@code @Async("taskExecutor")} 调用 {@link LlmScoreService#score}，完成回调 {@link #onAiScoreCompleted}</li>
- *   <li>撤回：仅候选人本人 + 非终态；触发后写状态历史（不发站内信，待 §5）</li>
+ *   <li>撤回：仅候选人本人 + 非终态；触发后写状态历史 + §5 系统消息（自动给 HR 发站内信）</li>
  * </ul>
  */
 @Slf4j
@@ -75,6 +77,7 @@ public class ApplicationServiceImpl implements ApplicationService {
     private final ResumeAttachmentMapper resumeAttachmentMapper;
     private final ResumeService resumeService;
     private final LlmScoreService llmScoreService;
+    private final MessageService messageService;
     private final ObjectMapper objectMapper;
 
     // ============ 状态机常量 ============
@@ -211,11 +214,33 @@ public class ApplicationServiceImpl implements ApplicationService {
         recordHistory(app.getId(), from, STATUS_WITHDRAWN, candidateId, "候选人主动撤回");
         log.info("[ApplicationService] 候选人 {} 撤回投递 {}", candidateId, applicationId);
 
+        // §5 消息中心：触发系统通知给 HR（同一会话内追加 SYSTEM 消息，SSE 推送）
+        try {
+            Job job = jobMapper.selectById(app.getJobId());
+            User candidate = userMapper.selectById(candidateId);
+            String candidateName = candidate != null
+                    ? (candidate.getUsername() != null ? candidate.getUsername() : candidate.getEmail())
+                    : "候选人";
+            String jobTitle = job != null ? job.getTitle() : "该职位";
+            String content = "候选人 " + candidateName + " 已撤回对职位「" + jobTitle + "」的投递";
+            messageService.sendSystemMessage(app.getJobId() != null ? findHrUserIdByJob(app.getJobId()) : 0L,
+                    candidateId, content, app.getJobId());
+        } catch (Exception e) {
+            // 系统消息失败不影响撤回主流程（已写状态 + 状态历史）
+            log.warn("[ApplicationService] 撤回系统消息发送失败 app={} err={}", app.getId(), e.getMessage());
+        }
+
         WithdrawResponse resp = new WithdrawResponse();
         resp.setApplicationId(app.getId());
         resp.setStatus(app.getStatus());
         resp.setUpdatedAt(app.getUpdatedAt());
         return resp;
+    }
+
+    /** 取职位对应 HR 用户 ID（用于 sendSystemMessage 的 hrUserId 参数） */
+    private Long findHrUserIdByJob(Long jobId) {
+        Job job = jobMapper.selectById(jobId);
+        return job != null ? job.getHrUserId() : 0L;
     }
 
     // ============ HR 端 ============
@@ -659,6 +684,12 @@ public class ApplicationServiceImpl implements ApplicationService {
             dto.setJobTitle(job.getTitle());
             dto.setJobDescription(job.getDescription());
             dto.setJobRequirements(job.getRequirements());
+            // §5 消息中心：HR ID + 名称（候选人侧发起会话用）
+            dto.setHrUserId(job.getHrUserId());
+            User hrUser = userMapper.selectById(job.getHrUserId());
+            if (hrUser != null) {
+                dto.setHrUserName(hrUser.getUsername() != null ? hrUser.getUsername() : hrUser.getEmail());
+            }
             if (job.getCompanyId() != null) {
                 Company company = companyMapper.selectById(job.getCompanyId());
                 if (company != null) dto.setCompanyName(company.getName());

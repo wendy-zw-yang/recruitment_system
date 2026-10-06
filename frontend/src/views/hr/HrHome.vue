@@ -3,6 +3,7 @@ import { onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { jobApi } from '@/api/job'
 import { applicationApi } from '@/api/application'
+import { messageApi } from '@/api/message'
 import JobListCard from '@/views/common/JobListCard.vue'
 
 const route = useRoute()
@@ -14,6 +15,10 @@ function goPublish() {
 
 function goInbox() {
   router.push('/hr/applications')
+}
+
+function goMessages() {
+  router.push('/messages')
 }
 
 /** HR 端首页「我发布的职位」：仅展示 ONLINE，按用户要求不显示状态。 */
@@ -34,15 +39,16 @@ const stats = ref({
 })
 
 async function loadStats() {
-  // 三类数据并发拉：在线职位数 + 收到简历数 + 未读消息数（§5 消息中心未上线，固定 0）
+  // 三类数据并发拉：在线职位数 + 收到简历数 + 未读消息数（§5 消息中心）
   try {
-    const [jobsRes, appsRes] = await Promise.all([
+    const [jobsRes, appsRes, unreadRes] = await Promise.all([
       jobApi.listMine({ status: 'ONLINE', pageNum: 1, pageSize: 1 }),
-      applicationApi.hrList({ jobId: null, status: 'ACTIVE', pageNum: 1, pageSize: 1 })
+      applicationApi.hrList({ jobId: null, status: 'ACTIVE', pageNum: 1, pageSize: 1 }),
+      messageApi.unreadStats()
     ])
     stats.value.onlineJobs = jobsRes?.total || 0
     stats.value.receivedResumes = appsRes?.total || 0
-    stats.value.unreadMessages = 0  // §5 消息中心上线后接入
+    stats.value.unreadMessages = unreadRes?.total || 0
   } catch (e) {
     console.warn('HrHome stats load failed:', e)
   }
@@ -98,12 +104,13 @@ const quickActions = [
   { icon: '+', title: '发布新职位', action: 'publish' },
   { icon: '📥', title: '简历收件箱', action: 'inbox' },
   { icon: '🔍', title: '搜索人才', disabled: true },
-  { icon: '💬', title: '消息中心', disabled: true }
+  { icon: '💬', title: '消息中心', action: 'messages' }
 ]
 
 function onQuick(action) {
   if (action === 'publish') return goPublish()
   if (action === 'inbox') return goInbox()
+  if (action === 'messages') return goMessages()
 }
 
 const STATUS_TYPE = {

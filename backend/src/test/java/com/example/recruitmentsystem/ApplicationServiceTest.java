@@ -78,6 +78,7 @@ class ApplicationServiceTest {
                 jobMapper, userMapper, companyMapper,
                 resumeMapper, resumeAttachmentMapper,
                 mockResumeService, mockLlm,
+                Mockito.mock(com.example.recruitmentsystem.service.message.MessageService.class),
                 new ObjectMapper());
     }
 

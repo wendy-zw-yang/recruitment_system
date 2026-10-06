@@ -69,6 +69,11 @@ async function onWithdraw() {
   }
 }
 
+function onContactHr() {
+  if (!app.value?.hrUserId) return
+  router.push({ path: '/messages', query: { peer: app.value.hrUserId } })
+}
+
 function statusLabel(s) { return STATUS_LABEL[s] || s }
 function statusType(s) { return STATUS_TYPE[s] || 'info' }
 
@@ -100,6 +105,14 @@ function fmtDateTime(dt) {
           <!-- v0.5：候选人侧不展示 AI 评分 / 评分理由（详见 AI集成.md §6.4.3） -->
         </div>
         <div class="head-actions">
+          <el-button
+            v-if="app.hrUserId"
+            type="primary"
+            plain
+            @click="onContactHr"
+          >
+            💬 联系 HR
+          </el-button>
           <el-button
             v-if="app.withdrawable"
             type="danger"

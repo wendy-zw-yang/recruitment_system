@@ -186,6 +186,11 @@ async function deleteNote(n) {
   }
 }
 
+function onContactCandidate() {
+  if (!app.value?.candidateId) return
+  router.push({ path: '/messages', query: { peer: app.value.candidateId } })
+}
+
 function statusLabel(s) { return STATUS_LABEL[s] || s }
 function statusType(s) { return STATUS_TYPE[s] || 'info' }
 
@@ -222,6 +227,16 @@ function fmtDateTime(dt) {
           </div>
           <p v-if="app.candidateEmail" class="contact">📧 {{ app.candidateEmail }}</p>
           <p v-if="app.candidatePhone" class="contact">📱 {{ app.candidatePhone }}</p>
+          <div class="head-actions">
+            <el-button
+              v-if="app.candidateId"
+              type="primary"
+              plain
+              @click="onContactCandidate"
+            >
+              💬 联系候选人
+            </el-button>
+          </div>
         </div>
       </div>
 

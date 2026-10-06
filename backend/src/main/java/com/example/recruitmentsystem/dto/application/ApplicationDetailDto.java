@@ -18,6 +18,10 @@ public class ApplicationDetailDto {
     private String candidateEmail;
     private String candidatePhone;
 
+    /** §5 消息中心：发起会话所需的对方用户 ID（候选人视角 = HR；HR 视角 = 候选人） */
+    private Long hrUserId;
+    private String hrUserName;
+
     private Long jobId;
     private String jobTitle;
     private String companyName;

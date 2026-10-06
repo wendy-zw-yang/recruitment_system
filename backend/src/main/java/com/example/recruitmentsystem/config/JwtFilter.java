@@ -40,9 +40,20 @@ public class JwtFilter extends OncePerRequestFilter {
     protected void doFilterInternal(HttpServletRequest request,
                                     HttpServletResponse response,
                                     FilterChain chain) throws ServletException, IOException {
+        String token = null;
         String header = request.getHeader(HEADER);
         if (header != null && header.startsWith(PREFIX)) {
-            String token = header.substring(PREFIX.length()).trim();
+            token = header.substring(PREFIX.length()).trim();
+        }
+        // §5 消息中心 SSE：浏览器原生 EventSource 无法携带 Authorization 头，
+        // 允许通过查询参数 {@code ?t=<token>} 传 token（仅 EventSource 长连接用）。
+        if (token == null || token.isEmpty()) {
+            String queryToken = request.getParameter("t");
+            if (queryToken != null && !queryToken.isBlank()) {
+                token = queryToken.trim();
+            }
+        }
+        if (token != null && !token.isEmpty()) {
             try {
                 Claims claims = jwtUtil.parse(token);
                 Long userId = jwtUtil.getUserId(claims);
