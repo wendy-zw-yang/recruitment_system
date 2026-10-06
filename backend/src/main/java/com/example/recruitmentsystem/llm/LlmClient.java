@@ -18,7 +18,10 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
 
+import java.net.URI;
 import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.Duration;
@@ -42,16 +45,19 @@ public class LlmClient {
     private final RestClient restClient;
     private final ObjectMapper objectMapper;
     private final Cache<String, JsonNode> cache;
+    /** v0.6：用于流式调用（AI-4）。复用同一 HttpClient 以节省连接池。 */
+    private final HttpClient httpClient;
+    private final Duration httpTimeout;
 
     public LlmClient(LlmConfig llmConfig, AiCallLogMapper aiCallLogMapper, ObjectMapper objectMapper) {
         this.llmConfig = llmConfig;
         this.aiCallLogMapper = aiCallLogMapper;
         this.objectMapper = objectMapper;
 
-        Duration timeout = Duration.ofSeconds(llmConfig.getTimeoutSeconds() == null ? 30 : llmConfig.getTimeoutSeconds());
-        JdkClientHttpRequestFactory factory = new JdkClientHttpRequestFactory(
-                HttpClient.newBuilder().connectTimeout(timeout).build());
-        factory.setReadTimeout(timeout);
+        this.httpTimeout = Duration.ofSeconds(llmConfig.getTimeoutSeconds() == null ? 30 : llmConfig.getTimeoutSeconds());
+        this.httpClient = HttpClient.newBuilder().connectTimeout(httpTimeout).build();
+        JdkClientHttpRequestFactory factory = new JdkClientHttpRequestFactory(this.httpClient);
+        factory.setReadTimeout(httpTimeout);
         this.restClient = RestClient.builder().requestFactory(factory).build();
 
         long ttl = llmConfig.getCacheTtlSeconds() == null ? 3600L : llmConfig.getCacheTtlSeconds();
@@ -138,6 +144,170 @@ public class LlmClient {
             throw new BusinessException(500, "大模型调用失败：" + errorMessage);
         } finally {
             persistLog(functionCode, combined, responseText, start, status,
+                    errorMessage, callerUserId, promptTokens, completionTokens);
+        }
+    }
+
+    /**
+     * v0.6 AI-4 流式调用 LLM。返回完整响应文本（用于持久化到 ai_call_log）。
+     *
+     * <p>协议：OpenAI Chat Completions + {@code stream=true}，逐行 {@code data: {json}} 解析。
+     * 兼容通义千问 Qwen / MiniMax 等 OpenAI-兼容服务。</p>
+     *
+     * <p>每个 chunk 调一次 {@code chunkHandler.accept(chunk)}；调用方负责把 chunk 转发到 SSE。
+     * 流完成 → 写 ai_call_log（status=SUCCESS，response=完整内容）。</p>
+     *
+     * <p>失败处理：
+     * <ul>
+     *   <li>配置缺失 → 抛 BusinessException(400)</li>
+     *   <li>HTTP 非 2xx → 抛 BusinessException(500)</li>
+     *   <li>超时（{@link #httpTimeout}） → 抛 BusinessException(500)</li>
+     *   <li>流中断 → 抛 BusinessException(500)；已发出的 chunk 已在调用方处理，本方法不重发</li>
+     * </ul>
+     * </p>
+     *
+     * @param functionCode  AI-4（写入 ai_call_log）
+     * @param systemPrompt  系统提示词
+     * @param userPrompt    用户提示词
+     * @param callerUserId  调用方 user.id
+     * @param maxTokens     单次响应最大 token（null 不传）
+     * @param modelOverride 模型覆盖（null 用 {@code llmConfig.getModel()}；传 {@code llmConfig.getChatModel()} 让 AI-4 用更快模型）
+     * @param chunkHandler  chunk 回调；参数 = 文本增量
+     * @return 完整响应文本（已拼接所有 chunk）
+     * @throws BusinessException 配置缺失 / HTTP 失败 / 超时 / 流解析异常
+     */
+    public String streamCall(String functionCode,
+                             String systemPrompt,
+                             String userPrompt,
+                             Long callerUserId,
+                             Integer maxTokens,
+                             String modelOverride,
+                             java.util.function.Consumer<String> chunkHandler) {
+        validateConfig();
+        String combined = systemPrompt + "\n\n" + userPrompt;
+
+        LlmRequest request = new LlmRequest();
+        String model = (modelOverride == null || modelOverride.isBlank())
+                ? llmConfig.getModel()
+                : modelOverride;
+        request.setModel(model);
+        request.setMessages(List.of(
+                new LlmRequest.Message("system", systemPrompt),
+                new LlmRequest.Message("user", userPrompt)
+        ));
+        request.setStream(true);
+        if (maxTokens != null && maxTokens > 0) {
+            request.setMaxTokens(maxTokens);
+        }
+        // v0.6.3：API 强制要求 response_format.type（"text" 或 "json_object"）
+        // 此前注释错误写"AI-4 不强制"，实际是必填，缺则 HTTP 400
+        request.setResponseFormat(new LlmRequest.ResponseFormat("text"));
+
+        String requestBody;
+        try {
+            requestBody = objectMapper.writeValueAsString(request);
+        } catch (Exception e) {
+            throw new BusinessException(500, "流式请求序列化失败：" + e.getMessage());
+        }
+
+        HttpRequest httpReq = HttpRequest.newBuilder()
+                .uri(URI.create(llmConfig.getApiUrl()))
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + llmConfig.getApiKey())
+                .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
+                .timeout(httpTimeout)
+                .POST(HttpRequest.BodyPublishers.ofString(requestBody, StandardCharsets.UTF_8))
+                .build();
+
+        long start = System.currentTimeMillis();
+        StringBuilder full = new StringBuilder();
+        String status = "SUCCESS";
+        String errorMessage = null;
+        Integer promptTokens = null;
+        Integer completionTokens = null;
+
+        try {
+            HttpResponse<java.util.stream.Stream<String>> resp = httpClient.send(
+                    httpReq, HttpResponse.BodyHandlers.ofLines());
+
+            int code = resp.statusCode();
+            if (code / 100 != 2) {
+                status = "FAIL";
+                // v0.6.3：读取 API 错误响应体，存入 ai_call_log 便于诊断 HTTP 400 等
+                StringBuilder bodyBuf = new StringBuilder();
+                try (java.util.stream.Stream<String> errLines = resp.body()) {
+                    for (java.util.Iterator<String> it = errLines.iterator(); it.hasNext(); ) {
+                        String l = it.next();
+                        if (l != null && !l.isBlank()) bodyBuf.append(l).append('\n');
+                        if (bodyBuf.length() > 400) break; // 错误响应通常很短，截断即可
+                    }
+                } catch (Exception bodyReadErr) {
+                    log.debug("[LlmClient] 读错误响应失败：{}", bodyReadErr.getMessage());
+                }
+                String body = bodyBuf.toString().trim();
+                errorMessage = truncate("HTTP " + code + (body.isEmpty() ? "" : " | body: " + body), 500);
+                throw new BusinessException(500, "大模型调用失败：" + errorMessage);
+            }
+
+            java.util.stream.Stream<String> lines = resp.body();
+            java.util.Iterator<String> it = lines.iterator();
+            while (it.hasNext()) {
+                String line = it.next();
+                if (line == null || line.isBlank()) continue;
+                if (!line.startsWith("data:")) continue;
+                String data = line.substring(5).trim();
+                if (data.isEmpty()) continue;
+                if ("[DONE]".equals(data)) break;
+
+                JsonNode node;
+                try {
+                    node = objectMapper.readTree(data);
+                } catch (Exception parseErr) {
+                    log.warn("[LlmClient] {} SSE 行解析失败：{}", functionCode, parseErr.getMessage());
+                    continue;
+                }
+                JsonNode choices = node.path("choices");
+                if (!choices.isArray() || choices.isEmpty()) continue;
+                JsonNode delta = choices.path(0).path("delta");
+                String content = delta.path("content").asText("");
+                if (!content.isEmpty()) {
+                    full.append(content);
+                    try {
+                        chunkHandler.accept(content);
+                    } catch (Exception chunkErr) {
+                        log.warn("[LlmClient] {} chunkHandler 抛错（已忽略）：{}",
+                                functionCode, chunkErr.getMessage());
+                    }
+                }
+                // 部分服务在最后一条带 usage
+                JsonNode usage = node.path("usage");
+                if (!usage.isMissingNode() && !usage.isNull()) {
+                    Integer pt = usage.path("prompt_tokens").asInt(0);
+                    Integer ct = usage.path("completion_tokens").asInt(0);
+                    if (pt > 0) promptTokens = pt;
+                    if (ct > 0) completionTokens = ct;
+                }
+            }
+            return full.toString();
+        } catch (BusinessException e) {
+            status = "FAIL";
+            errorMessage = e.getMessage();
+            throw e;
+        } catch (java.net.http.HttpTimeoutException e) {
+            status = "TIMEOUT";
+            errorMessage = truncate(e.getMessage(), 500);
+            throw new BusinessException(500, "大模型调用超时");
+        } catch (java.io.IOException e) {
+            status = "FAIL";
+            errorMessage = truncate(e.getMessage(), 500);
+            log.error("[LlmClient] 流式调用 IO 异常 function={}", functionCode, e);
+            throw new BusinessException(500, "大模型调用失败：" + errorMessage);
+        } catch (InterruptedException e) {
+            status = "FAIL";
+            errorMessage = "interrupted";
+            Thread.currentThread().interrupt();
+            throw new BusinessException(500, "大模型调用被中断");
+        } finally {
+            persistLog(functionCode, combined, full.toString(), start, status,
                     errorMessage, callerUserId, promptTokens, completionTokens);
         }
     }

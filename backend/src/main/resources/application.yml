@@ -45,6 +45,10 @@ llm:
   api-key: ${LLM_API_KEY:}
   model: ${LLM_MODEL:MiniMax-M3}
   timeout-seconds: 30
+  # v0.6 AI-4 智能客服专用配置
+  # chat-model 默认与 model 相同；如需更快首字速度，设置环境变量 LLM_CHAT_MODEL=qwen-turbo
+  chat-model: ${LLM_CHAT_MODEL:}
+  chat-max-tokens: 600
 
 app:
   mail:

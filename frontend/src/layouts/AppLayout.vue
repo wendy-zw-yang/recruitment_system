@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAuthStore } from '@/stores/useAuthStore'
+import ChatWidget from '@/components/ChatWidget.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -139,6 +140,9 @@ function goBack() {
       </button>
     </div>
   </main>
+
+  <!-- v0.6 AI-4 智能客服：仅已登录 + 非 ADMIN 可见 -->
+  <ChatWidget v-if="auth.isLoggedIn && !auth.isAdmin" />
 </template>
 
 <style scoped>

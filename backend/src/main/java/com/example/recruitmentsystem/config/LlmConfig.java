@@ -28,4 +28,23 @@ public class LlmConfig {
 
     /** 调用结果本地缓存 TTL（秒）。0 表示不缓存。 */
     private Integer cacheTtlSeconds = 3600;
+
+    /**
+     * AI-4 智能客服专用模型。默认同 {@link #model}，但用户可设置为更快的模型（如 {@code qwen-turbo}）
+     * 以获得更快首字速度。详见 {@code docs/dev-logs/2026-10-06.md} §v0.6 速度优化。
+     */
+    private String chatModel;
+
+    /**
+     * AI-4 单次响应最大 token 数。用于限制客服回答长度（中文 200 字 ≈ 400 tokens，留 50% buffer）。
+     * 调小可缩短响应时间。
+     */
+    private Integer chatMaxTokens = 600;
+
+    /**
+     * 解析 chatModel（缺省时回退到 {@link #model}）。
+     */
+    public String getChatModel() {
+        return (chatModel == null || chatModel.isBlank()) ? model : chatModel;
+    }
 }

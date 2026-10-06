@@ -20,6 +20,12 @@ public class LlmRequest {
     /** 可选；流式输出（SSE）时为 true，详见 §6.4.5 AI-4。 */
     private Boolean stream = false;
 
+    /**
+     * 可选；单次响应最大 token 数。AI-4 用以限制客服回答长度（避免过度生成拉慢速度）。
+     */
+    @JsonProperty("max_tokens")
+    private Integer maxTokens;
+
     public String getModel() { return model; }
     public void setModel(String model) { this.model = model; }
     public List<Message> getMessages() { return messages; }
@@ -28,6 +34,8 @@ public class LlmRequest {
     public void setResponseFormat(ResponseFormat responseFormat) { this.responseFormat = responseFormat; }
     public Boolean getStream() { return stream; }
     public void setStream(Boolean stream) { this.stream = stream; }
+    public Integer getMaxTokens() { return maxTokens; }
+    public void setMaxTokens(Integer maxTokens) { this.maxTokens = maxTokens; }
 
     public static class Message {
         private String role;
