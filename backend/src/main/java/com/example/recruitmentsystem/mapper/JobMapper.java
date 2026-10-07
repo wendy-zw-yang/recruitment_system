@@ -37,4 +37,24 @@ public interface JobMapper extends BaseMapper<Job> {
      */
     List<Long> selectFavoriteJobIds(@Param("candidateId") Long candidateId,
                                     @Param("jobIds") List<Long> jobIds);
+
+    /**
+     * v0.7.3：候选人首页"推荐职位"候选集合。
+     *
+     * <p>宽筛候选集合：偏好字段任一命中即入选（行业 OR 城市 OR 省份 OR 关键词）。
+     * 多级排序（Tier 1-4）由 Java 内存打分；SQL 仅过滤 + LIMIT。</p>
+     *
+     * @param industryId   期望行业（nullable）
+     * @param cityId       期望城市（nullable）
+     * @param province     期望省份（nullable，空字符串视为未传）
+     * @param keywordTokens 期望职位拆词列表（nullable；任一字段 LIKE 任一拆词即命中）
+     * @param offset LIMIT 起始偏移
+     * @param limit LIMIT 条数
+     */
+    List<Job> selectPageForRecommendation(@Param("industryId") Long industryId,
+                                          @Param("cityId") Long cityId,
+                                          @Param("province") String province,
+                                          @Param("keywordTokens") List<String> keywordTokens,
+                                          @Param("offset") int offset,
+                                          @Param("limit") int limit);
 }

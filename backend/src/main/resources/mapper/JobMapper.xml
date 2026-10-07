@@ -86,4 +86,71 @@
               </foreach>
           </if>
     </select>
+
+    <!--
+        v0.7.3：候选人首页"推荐职位"分页查询。
+        偏好字段全空 → 退化为最新发布 5 条 ONLINE 职位。
+        否则按"候选集合"宽筛：行业 OR city_id OR province OR 任一关键词 LIKE 三字段。
+        多级排序（Tier 1-4）由 Java 在内存中按 matchScore 排；SQL 仅做基本过滤。
+        数据量小（< 100 职位）适合此方案。
+    -->
+    <select id="selectPageForRecommendation" resultMap="JobMap">
+        SELECT j.*
+        FROM job j
+        WHERE j.is_deleted = 0
+          AND j.status = 'ONLINE'
+          <choose>
+              <when test="industryId != null">
+                  AND (j.industry_id = #{industryId}
+                  <if test="cityId != null">
+                      OR j.city_id = #{cityId}
+                  </if>
+                  <if test="province != null and province != ''">
+                      OR j.province = #{province}
+                  </if>
+                  <if test="keywordTokens != null and keywordTokens.size() > 0">
+                      <foreach collection="keywordTokens" item="tk" open=" OR (" close=")" separator=" OR ">
+                          j.title LIKE CONCAT('%', #{tk}, '%')
+                          OR j.requirements LIKE CONCAT('%', #{tk}, '%')
+                          OR j.keywords LIKE CONCAT('%', #{tk}, '%')
+                      </foreach>
+                  </if>)
+              </when>
+              <when test="cityId != null">
+                  AND (j.city_id = #{cityId}
+                  <if test="province != null and province != ''">
+                      OR j.province = #{province}
+                  </if>
+                  <if test="keywordTokens != null and keywordTokens.size() > 0">
+                      <foreach collection="keywordTokens" item="tk" open=" OR (" close=")" separator=" OR ">
+                          j.title LIKE CONCAT('%', #{tk}, '%')
+                          OR j.requirements LIKE CONCAT('%', #{tk}, '%')
+                          OR j.keywords LIKE CONCAT('%', #{tk}, '%')
+                      </foreach>
+                  </if>)
+              </when>
+              <when test="province != null and province != ''">
+                  AND (j.province = #{province}
+                  <if test="keywordTokens != null and keywordTokens.size() > 0">
+                      <foreach collection="keywordTokens" item="tk" open=" OR (" close=")" separator=" OR ">
+                          j.title LIKE CONCAT('%', #{tk}, '%')
+                          OR j.requirements LIKE CONCAT('%', #{tk}, '%')
+                          OR j.keywords LIKE CONCAT('%', #{tk}, '%')
+                      </foreach>
+                  </if>)
+              </when>
+              <when test="keywordTokens != null and keywordTokens.size() > 0">
+                  AND <foreach collection="keywordTokens" item="tk" open="(" close=")" separator=" OR ">
+                      j.title LIKE CONCAT('%', #{tk}, '%')
+                      OR j.requirements LIKE CONCAT('%', #{tk}, '%')
+                      OR j.keywords LIKE CONCAT('%', #{tk}, '%')
+                  </foreach>
+              </when>
+              <otherwise>
+                  <!-- 全部条件都没传：退化为最新发布（不加额外过滤） -->
+              </otherwise>
+          </choose>
+        ORDER BY j.published_at DESC
+        LIMIT #{limit} OFFSET #{offset}
+    </select>
 </mapper>

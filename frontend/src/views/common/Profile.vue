@@ -12,6 +12,7 @@ const auth = useAuthStore()
 const activeTab = ref('profile')
 const loading = ref(false)
 const industries = ref([])
+const cities = ref([])
 
 const tabs = computed(() => {
   const base = [
@@ -41,11 +42,35 @@ const security = ref({
   confirmPassword: ''
 })
 
+// v0.7.3：偏好字段类型改为 id（行业/城市）+ 文本（按币种 + 关键词）
 const preference = ref({
   expectedPosition: '',
-  expectedIndustry: '',
-  expectedCity: ''
+  expectedIndustryId: null,
+  expectedProvince: '',
+  expectedCityId: null
 })
+
+// 省份下拉选项（从 dict_city 派生去重）
+const provinces = computed(() => {
+  const set = new Set()
+  cities.value.forEach((c) => {
+    if (c.province && c.province.trim()) set.add(c.province)
+  })
+  return Array.from(set).sort()
+})
+
+// 城市下拉选项（按省份过滤）
+const cityOptions = computed(() => {
+  if (!preference.value.expectedProvince) return cities.value
+  return cities.value.filter(
+    (c) => c.province === preference.value.expectedProvince
+  )
+})
+
+// 监听省份变化，清空城市（避免省份-城市错配）
+function onProvinceChange() {
+  preference.value.expectedCityId = null
+}
 
 const company = ref({
   id: null,
@@ -81,9 +106,18 @@ async function loadAll() {
     }
 
     if (auth.isCandidate) {
+      // 候选人的偏好 tab：行业 + 城市字典
+      if (industries.value.length === 0) {
+        industries.value = (await dictApi.industries()) || []
+      }
+      if (cities.value.length === 0) {
+        cities.value = (await dictApi.cities()) || []
+      }
       const pref = await profileApi.getPreference()
       preference.value.expectedPosition = pref.expectedPosition || ''
-      // expectedIndustry / expectedCity 仅前端展示占位
+      preference.value.expectedIndustryId = pref.expectedIndustryId || null
+      preference.value.expectedProvince = pref.expectedProvince || ''
+      preference.value.expectedCityId = pref.expectedCityId || null
     }
     if (auth.isHR) {
       const comp = await profileApi.getCompany()
@@ -152,12 +186,14 @@ async function changePassword() {
   }
 }
 
+// v0.7.3：偏好保存——行业 / 省份 / 城市 改为 id 关联
 async function savePreference() {
   try {
     await profileApi.updatePreference({
       expectedPosition: preference.value.expectedPosition,
-      expectedIndustry: preference.value.expectedIndustry,
-      expectedCity: preference.value.expectedCity
+      expectedIndustryId: preference.value.expectedIndustryId,
+      expectedProvince: preference.value.expectedProvince,
+      expectedCityId: preference.value.expectedCityId
     })
     ElMessage.success('求职偏好已保存')
   } catch (e) {
@@ -258,16 +294,52 @@ async function handleLogout() {
 
         <div v-if="activeTab === 'preference'" class="content-card">
           <h2 class="content-title">求职偏好</h2>
-          <p class="content-desc">完善偏好后，系统会优先为你推荐匹配的职位。</p>
+          <p class="content-desc">完善偏好后，系统会优先为你推荐匹配的职位；职位标题会按空白拆词后匹配职位标题 / JD 要求 / 关键词。</p>
           <el-form label-width="100px" class="profile-form">
             <el-form-item label="期望职位">
-              <el-input v-model="preference.expectedPosition" placeholder="例如：Java 工程师" />
+              <el-input v-model="preference.expectedPosition" placeholder="例如：Java 工程师（多个词用空格分隔）" />
             </el-form-item>
             <el-form-item label="期望行业">
-              <el-input v-model="preference.expectedIndustry" placeholder="例如：互联网" />
+              <el-select v-model="preference.expectedIndustryId" placeholder="请选择行业" clearable filterable>
+                <el-option
+                  v-for="i in industries"
+                  :key="i.id"
+                  :label="i.name"
+                  :value="i.id"
+                />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="期望省份">
+              <el-select
+                v-model="preference.expectedProvince"
+                placeholder="请选择省份"
+                clearable
+                filterable
+                @change="onProvinceChange"
+              >
+                <el-option
+                  v-for="p in provinces"
+                  :key="p"
+                  :label="p"
+                  :value="p"
+                />
+              </el-select>
             </el-form-item>
             <el-form-item label="期望城市">
-              <el-input v-model="preference.expectedCity" placeholder="例如：上海" />
+              <el-select
+                v-model="preference.expectedCityId"
+                placeholder="请先选择省份"
+                :disabled="!preference.expectedProvince"
+                clearable
+                filterable
+              >
+                <el-option
+                  v-for="c in cityOptions"
+                  :key="c.id"
+                  :label="c.name"
+                  :value="c.id"
+                />
+              </el-select>
             </el-form-item>
             <el-form-item>
               <el-button type="primary" @click="savePreference">保存偏好</el-button>

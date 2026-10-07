@@ -109,8 +109,10 @@ public class ProfileServiceImpl implements ProfileService {
                 .eq(CandidateProfile::getUserId, candidateId));
         if (p != null) {
             dto.setExpectedPosition(p.getExpectedPosition());
+            dto.setExpectedIndustryId(p.getExpectedIndustryId());
+            dto.setExpectedProvince(p.getExpectedProvince());
+            dto.setExpectedCityId(p.getExpectedCityId());
         }
-        // expectedIndustry / expectedCity 当前为前端展示占位字段，不持久化
         return dto;
     }
 
@@ -125,11 +127,19 @@ public class ProfileServiceImpl implements ProfileService {
             p.setUserId(candidateId);
             p.setCreatedAt(now);
         }
-        // 仅持久化 expectedPosition（schema 有此字段）
+        // v0.7.3：4 个偏好字段全部持久化（之前 expectedIndustry/expectedCity 仅前端展示占位）
         if (req.getExpectedPosition() != null) {
             p.setExpectedPosition(req.getExpectedPosition().isBlank() ? null : req.getExpectedPosition().trim());
         }
-        // expectedIndustry / expectedCity 前端仅展示；后续如需持久化需加 schema 列
+        if (req.getExpectedIndustryId() != null) {
+            p.setExpectedIndustryId(req.getExpectedIndustryId());
+        }
+        if (req.getExpectedProvince() != null) {
+            p.setExpectedProvince(req.getExpectedProvince().isBlank() ? null : req.getExpectedProvince().trim());
+        }
+        if (req.getExpectedCityId() != null) {
+            p.setExpectedCityId(req.getExpectedCityId());
+        }
         p.setUpdatedAt(now);
         if (p.getId() == null) {
             candidateProfileMapper.insert(p);

@@ -58,17 +58,29 @@ const stats = computed(() => {
  */
 const recentApplications = computed(() => applicationStore.myApplications.slice(0, 3))
 
-/** 推荐职位（取最新 5 条 ONLINE 职位） */
+/** v0.7.3 推荐职位（按候选人偏好 4 维度打分排序；未设偏好退化为最新发布 5 条） */
 const recommendedJobs = ref([])
 const recommendedTotal = ref(0)
+/** 兜底列表：偏好过滤无结果时显示最新发布 5 条 */
+const fallbackJobs = ref([])
 const jobsLoading = ref(false)
 
 async function loadRecommended() {
   jobsLoading.value = true
+  fallbackJobs.value = []
   try {
-    const page = await jobApi.list({ sort: 'newest', pageNum: 1, pageSize: 5 })
+    const page = await jobApi.recommended({ pageNum: 1, pageSize: 5 })
     recommendedJobs.value = page?.records || []
     recommendedTotal.value = page?.total || 0
+    // v0.7.3.1：偏好过滤无结果时拉取最新发布 5 条作为兜底
+    if (recommendedJobs.value.length === 0) {
+      try {
+        const fallback = await jobApi.list({ sort: 'newest', pageNum: 1, pageSize: 5 })
+        fallbackJobs.value = fallback?.records || []
+      } catch (e) {
+        console.warn('CandidateHome fallback jobs load failed:', e)
+      }
+    }
   } catch (e) {
     console.warn('CandidateHome recommended jobs load failed:', e)
   } finally {
@@ -173,27 +185,56 @@ watch(
       <div class="panel-head">
         <div class="panel-title">
           <h2>推荐职位</h2>
-          <span class="hint">最新在线岗位 · 来自 HR 发布</span>
+          <span class="hint">按你的偏好智能筛选 · 来自 HR 发布</span>
         </div>
         <el-button text type="primary" @click="router.push('/jobs')">查看更多 →</el-button>
       </div>
 
       <div v-if="jobsLoading" class="loading">加载中…</div>
 
-      <div v-else-if="recommendedJobs.length === 0" class="empty-state">
-        <div class="empty-state__icon">🔍</div>
-        <h3 class="empty-state__title">还没有在线职位</h3>
-        <p class="empty-state__desc">HR 暂未发布任何职位；你可以先去<a class="link" @click="router.push('/resume')">完善简历</a>，新职位上线后会优先看到</p>
-      </div>
+      <template v-else>
+        <!-- 无匹配但有兜底：显示提示 + 推荐最新发布 -->
+        <div v-if="recommendedJobs.length === 0 && fallbackJobs.length > 0">
+          <div class="empty-state">
+            <div class="empty-state__icon">🔍</div>
+            <h3 class="empty-state__title">未找到符合您偏好的职位</h3>
+            <p class="empty-state__desc">下面是平台最新在招岗位，你可以先看看，也可以去<a class="link" @click="router.push('/profile?tab=preference')">调整偏好</a>后刷新</p>
+          </div>
+          <h4 class="fallback-title">最新在线岗位</h4>
+          <div class="job-list">
+            <JobListCard
+              v-for="job in fallbackJobs"
+              :key="job.id"
+              :job="job"
+              :show-actions="false"
+              @detail="goJobDetail"
+            />
+          </div>
+        </div>
 
-      <div v-else class="job-list">
-        <JobListCard
-          v-for="job in recommendedJobs"
-          :key="job.id"
-          :job="job"
-          :show-actions="false"
-          @detail="goJobDetail"
-        />
+        <!-- 无匹配且无兜底 -->
+        <div v-else-if="recommendedJobs.length === 0" class="empty-state">
+          <div class="empty-state__icon">🔍</div>
+          <h3 class="empty-state__title">还没有在线职位</h3>
+          <p class="empty-state__desc">HR 暂未发布任何职位；你可以先去<a class="link" @click="router.push('/resume')">完善简历</a>，新职位上线后会优先看到</p>
+        </div>
+
+        <!-- 有匹配 -->
+        <div v-else class="job-list">
+          <JobListCard
+            v-for="job in recommendedJobs"
+            :key="job.id"
+            :job="job"
+            :show-actions="false"
+            @detail="goJobDetail"
+          />
+        </div>
+      </template>
+
+      <!-- v0.7.3：未设偏好时引导去设置偏好 -->
+      <div v-if="!jobsLoading && recommendedTotal >= 5" class="set-pref-hint">
+        <span>想要更精准的推荐？</span>
+        <a class="link" @click="router.push('/profile?tab=preference')">设置求职偏好 →</a>
       </div>
     </section>
 
@@ -544,4 +585,21 @@ watch(
 }
 .link { color: var(--primary); cursor: pointer; text-decoration: none; }
 .link:hover { text-decoration: underline; }
+.set-pref-hint {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px dashed var(--line);
+  font-size: 13px;
+  color: var(--text-soft);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.fallback-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-soft);
+  margin: 18px 0 10px;
+  padding-left: 4px;
+}
 </style>

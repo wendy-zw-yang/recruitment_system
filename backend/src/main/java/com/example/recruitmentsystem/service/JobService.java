@@ -56,6 +56,27 @@ public interface JobService {
     /** 候选人是否已收藏某职位（用于列表展示） */
     boolean isFavorited(Long candidateId, Long jobId);
 
+    /**
+     * v0.7.3：候选人首页"推荐职位"。
+     *
+     * <p>按候选人偏好（{@code candidate_profile.expected_*}）筛选 + 多级排序：</p>
+     * <ol>
+     *   <li>第 1 优先级：行业 + 城市 / 省份 + 关键词 三项都命中（最佳匹配）</li>
+     *   <li>第 2 优先级：行业 + 城市 / 省份（位置对）</li>
+     *   <li>第 3 优先级：关键词命中（任一字段 LIKE 任一拆词）</li>
+     *   <li>第 4 优先级：行业 OR 城市 / 省份（部分匹配）</li>
+     *   <li>兜底：按发布时间降序</li>
+     * </ol>
+     *
+     * <p>候选人为空时（用户未设置偏好）退化为"最新发布 5 条 ONLINE 职位"，
+     * 与 {@code /jobs} 首页排序一致；Controller 用 pageSize=5 调用。</p>
+     *
+     * @param candidateId 当前候选人 ID（nullable：null 时退化为最新发布）
+     * @param pageNum 页码（首页通常 1）
+     * @param pageSize 每页条数（首页通常 5）
+     */
+    IPage<JobDto> recommendOnResume(Long candidateId, int pageNum, int pageSize);
+
     /** UC-22 HR 一键润色（AI-3，润色所有内容字段） */
     LlmJdService.PolishedJd polishJd(Long hrUserId,
                                        String title,

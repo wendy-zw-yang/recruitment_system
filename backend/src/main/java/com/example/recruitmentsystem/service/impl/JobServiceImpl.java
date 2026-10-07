@@ -7,6 +7,7 @@ import com.example.recruitmentsystem.common.exception.BusinessException;
 import com.example.recruitmentsystem.dto.job.JobCreateRequest;
 import com.example.recruitmentsystem.dto.job.JobDto;
 import com.example.recruitmentsystem.dto.job.JobUpdateRequest;
+import com.example.recruitmentsystem.entity.CandidateProfile;
 import com.example.recruitmentsystem.entity.Company;
 import com.example.recruitmentsystem.entity.DictCity;
 import com.example.recruitmentsystem.entity.DictIndustry;
@@ -14,6 +15,7 @@ import com.example.recruitmentsystem.entity.FavoriteJob;
 import com.example.recruitmentsystem.entity.Job;
 import com.example.recruitmentsystem.entity.User;
 import com.example.recruitmentsystem.llm.service.LlmJdService;
+import com.example.recruitmentsystem.mapper.CandidateProfileMapper;
 import com.example.recruitmentsystem.mapper.CompanyMapper;
 import com.example.recruitmentsystem.mapper.DictCityMapper;
 import com.example.recruitmentsystem.mapper.DictIndustryMapper;
@@ -27,6 +29,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -60,6 +64,7 @@ public class JobServiceImpl implements JobService {
     private final CompanyMapper companyMapper;
     private final DictIndustryMapper industryMapper;
     private final DictCityMapper cityMapper;
+    private final CandidateProfileMapper candidateProfileMapper;
     private final LlmJdService llmJdService;
 
     // ============ HR 端 ============
@@ -232,6 +237,163 @@ public class JobServiceImpl implements JobService {
         q.eq(FavoriteJob::getCandidateId, candidateId)
                 .eq(FavoriteJob::getJobId, jobId);
         return favoriteJobMapper.selectCount(q) > 0;
+    }
+
+    @Override
+    public IPage<JobDto> recommendOnResume(Long candidateId, int pageNum, int pageSize) {
+        // 1. 读取候选人偏好（candidate_profile）
+        Long industryId = null;
+        String province = null;
+        Long cityId = null;
+        List<String> tokens = new ArrayList<>();
+        if (candidateId != null) {
+            CandidateProfile pref = candidateProfileMapper.selectOne(
+                    new LambdaQueryWrapper<CandidateProfile>()
+                            .eq(CandidateProfile::getUserId, candidateId));
+            if (pref != null) {
+                industryId = pref.getExpectedIndustryId();
+                province = pref.getExpectedProvince();
+                cityId = pref.getExpectedCityId();
+                if (pref.getExpectedPosition() != null && !pref.getExpectedPosition().isBlank()) {
+                    String raw = pref.getExpectedPosition().trim();
+                    for (String tk : raw.split("\\s+")) {
+                        if (!tk.isEmpty()) tokens.add(tk);
+                    }
+                    // v0.7.3.1：连续无空白中文输入（如"系统架构师"）额外拆 2-char 滑动串，
+                    // 解决"系统架构师"匹配不上"系统设计架构师"（中间隔着"设计"）的问题。
+                    // SQL 任一命中即入选，所以"系统"命中就够了。
+                    for (String part : raw.split("\\s+")) {
+                        if (part.length() >= 4) {
+                            for (int i = 0; i <= part.length() - 2; i++) {
+                                String chunk = part.substring(i, i + 2);
+                                if (!tokens.contains(chunk)) tokens.add(chunk);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        boolean hasAnyPref = industryId != null
+                || (province != null && !province.isBlank())
+                || cityId != null
+                || !tokens.isEmpty();
+
+        Page<Job> page = new Page<>(pageNum, pageSize);
+
+        if (!hasAnyPref) {
+            // 偏好全空 → 退化为最新发布（与 /jobs 接口首页行为一致）
+            List<Job> raw = jobMapper.selectPageForRecommendation(
+                    null, null, null, null, 0, pageSize);
+            return wrapAsPage(raw, pageNum, pageSize, candidateId);
+        }
+
+        // 2. SQL 宽筛：行业 / 城市 / 省份 / 关键词 任一命中 → 拉取较多候选
+        int broadLimit = Math.max(pageSize * 5, 50); // 拉 5 倍候选集供打分
+        List<Job> candidates = jobMapper.selectPageForRecommendation(
+                industryId, cityId, province, tokens.isEmpty() ? null : tokens,
+                0, broadLimit);
+
+        // 3. Java 内存打分（4 维：行业 + 城市 + 省份 + 关键词）
+        // score 越高越相关；同分按发布时间倒序
+        // 关键：lambda 不能捕获非 effectively-final 变量；将偏好绑成局部常量
+        final Long fIndustryId = industryId;
+        final Long fCityId = cityId;
+        final String fProvince = province;
+        final List<String> fTokens = tokens;
+        List<Job> scored = candidates.stream()
+                .map(j -> new ScoredJob(j, scoreJob(j, fIndustryId, fCityId, fProvince, fTokens)))
+                .sorted(Comparator
+                        .comparingInt(ScoredJob::getScore).reversed()
+                        .thenComparing(ScoredJob::getPublishedAt, Comparator.nullsLast(Comparator.reverseOrder())))
+                .map(ScoredJob::getJob)
+                .collect(Collectors.toList());
+
+        // 4. 内存分页
+        int total = scored.size();
+        int from = Math.min((pageNum - 1) * pageSize, total);
+        int to = Math.min(from + pageSize, total);
+        List<Job> pageRecords = scored.subList(from, to);
+
+        return wrapAsPage(pageRecords, pageNum, pageSize, candidateId, (long) total);
+    }
+
+    /** 把内存 List 包装成 IPage&lt;JobDto&gt;（按推荐位或无偏好共用） */
+    private IPage<JobDto> wrapAsPage(List<Job> jobs, int pageNum, int pageSize, Long candidateId) {
+        return wrapAsPage(jobs, pageNum, pageSize, candidateId, (long) jobs.size());
+    }
+
+    private IPage<JobDto> wrapAsPage(List<Job> jobs, int pageNum, int pageSize, Long candidateId, Long total) {
+        Page<Job> memPage = new Page<>(pageNum, pageSize, total);
+        memPage.setRecords(jobs);
+        IPage<JobDto> dtos = memPage.convert(this::enrich);
+        fillFavorited(dtos, candidateId);
+        return dtos;
+    }
+
+    /**
+     * 职位评分（4 维度位图求和）：
+     * <ul>
+     *   <li>bit 0（+8）：行业命中</li>
+     *   <li>bit 1（+4）：城市精确命中</li>
+     *   <li>bit 2（+2）：省份命中（仅在未命中城市时计分）</li>
+     *   <li>bit 3（+1）：关键词命中（任一 token 在 title/requirements/keywords 命中）</li>
+     * </ul>
+     * 总分越高越相关；同分按发布时间倒序（由调用方排）。
+     */
+    private int scoreJob(Job j, Long industryId, Long cityId, String province, List<String> tokens) {
+        int score = 0;
+        boolean cityMatched = false;
+        if (industryId != null && industryId.equals(j.getIndustryId())) {
+            score += 8;
+        }
+        if (cityId != null && cityId.equals(j.getCityId())) {
+            score += 4;
+            cityMatched = true;
+        }
+        if (!cityMatched && province != null && !province.isBlank()
+                && province.equals(j.getProvince())) {
+            score += 2;
+        }
+        if (!tokens.isEmpty()) {
+            String title = j.getTitle() == null ? "" : j.getTitle();
+            String req = j.getRequirements() == null ? "" : j.getRequirements();
+            String kw = j.getKeywords() == null ? "" : j.getKeywords();
+            for (String tk : tokens) {
+                if (title.contains(tk) || req.contains(tk) || kw.contains(tk)) {
+                    score += 1;
+                    break;
+                }
+            }
+        }
+        return score;
+    }
+
+    /** 评分包装类（Java 内存排序用） */
+    private static class ScoredJob {
+        private final Job job;
+        private final int score;
+
+        ScoredJob(Job job, int score) {
+            this.job = job;
+            this.score = score;
+        }
+
+        Job getJob() { return job; }
+        int getScore() { return score; }
+        LocalDateTime getPublishedAt() { return job.getPublishedAt(); }
+    }
+
+    /**
+     * 填充 favorited 字段（参考 listForCandidate 实现，避免 N+1）。
+     */
+    private void fillFavorited(IPage<JobDto> dtos, Long candidateId) {
+        if (candidateId == null || dtos.getRecords() == null || dtos.getRecords().isEmpty()) return;
+        List<Long> jobIds = dtos.getRecords().stream().map(JobDto::getId).collect(Collectors.toList());
+        List<Long> favIds = jobMapper.selectFavoriteJobIds(candidateId, jobIds);
+        java.util.Set<Long> favSet = new java.util.HashSet<>(favIds);
+        for (JobDto dto : dtos.getRecords()) {
+            dto.setFavorited(favSet.contains(dto.getId()));
+        }
     }
 
     @Override

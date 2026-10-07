@@ -28,6 +28,9 @@ public class CandidateProfile {
     /** 期望行业 → {@code dict_industry.id} */
     private Long expectedIndustryId;
 
+    /** 期望省份（冗余存储，便于按省份聚合筛选，避免 JOIN dict_city） */
+    private String expectedProvince;
+
     /** 期望城市 → {@code dict_city.id} */
     private Long expectedCityId;
 

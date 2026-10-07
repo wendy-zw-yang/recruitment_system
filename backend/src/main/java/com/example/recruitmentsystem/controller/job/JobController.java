@@ -144,4 +144,18 @@ public class JobController {
         boolean favorited = jobService.toggleFavorite(CurrentUserContext.getUserId(), id);
         return Result.success(new FavoriteToggleResponse(id, favorited));
     }
+
+    /**
+     * v0.7.3：候选人首页"推荐职位"。
+     *
+     * <p>按 candidate_profile 偏好筛选 + 4 维度打分排序。
+     * 偏好全空时退化为最新发布 5 条（与 /jobs 默认排序一致）。</p>
+     */
+    @RoleCandidate
+    @GetMapping("/recommended")
+    public Result<IPage<JobDto>> recommended(@RequestParam(defaultValue = "1") Integer pageNum,
+                                             @RequestParam(defaultValue = "5") Integer pageSize) {
+        return Result.success(jobService.recommendOnResume(
+                CurrentUserContext.getUserId(), pageNum, pageSize));
+    }
 }

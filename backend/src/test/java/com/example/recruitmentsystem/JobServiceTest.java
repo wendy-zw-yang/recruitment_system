@@ -5,8 +5,10 @@ import com.example.recruitmentsystem.common.exception.BusinessException;
 import com.example.recruitmentsystem.dto.job.JobCreateRequest;
 import com.example.recruitmentsystem.dto.job.JobDto;
 import com.example.recruitmentsystem.dto.job.JobUpdateRequest;
+import com.example.recruitmentsystem.entity.CandidateProfile;
 import com.example.recruitmentsystem.entity.Company;
 import com.example.recruitmentsystem.entity.User;
+import com.example.recruitmentsystem.mapper.CandidateProfileMapper;
 import com.example.recruitmentsystem.mapper.CompanyMapper;
 import com.example.recruitmentsystem.mapper.DictCityMapper;
 import com.example.recruitmentsystem.mapper.DictIndustryMapper;
@@ -41,11 +43,12 @@ class JobServiceTest {
     @Autowired private DictIndustryMapper industryMapper;
     @Autowired private DictCityMapper cityMapper;
     @Autowired private FavoriteJobMapper favoriteJobMapper;
+    @Autowired private CandidateProfileMapper candidateProfileMapper;
     @Autowired private AuditLogService auditLogService;
 
     private JobServiceImpl jobService() {
         return new JobServiceImpl(jobMapper, favoriteJobMapper, userMapper, companyMapper,
-                industryMapper, cityMapper,
+                industryMapper, cityMapper, candidateProfileMapper,
                 org.mockito.Mockito.mock(com.example.recruitmentsystem.llm.service.LlmJdService.class));
     }
 
@@ -502,5 +505,191 @@ class JobServiceTest {
                 "Java", null, null, null, null, null, null, "newest", 1, 10);
         assertTrue(javaResult.getRecords().stream().anyMatch(j -> j.getId().equals(javaJob.getId())));
         assertFalse(javaResult.getRecords().stream().anyMatch(j -> j.getId().equals(pyJob.getId())));
+    }
+
+    // ============ v0.7.3 recommendOnResume ============
+
+    /** 创建偏好（私有工具，避免重复） */
+    private void savePreference(Long candidateId, String position, Long industryId, String province, Long cityId) {
+        CandidateProfile p = candidateProfileMapper.selectOne(
+                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<CandidateProfile>()
+                        .eq(CandidateProfile::getUserId, candidateId));
+        if (p == null) {
+            p = new CandidateProfile();
+            p.setUserId(candidateId);
+            p.setCreatedAt(java.time.LocalDateTime.now());
+        }
+        p.setExpectedPosition(position);
+        p.setExpectedIndustryId(industryId);
+        p.setExpectedProvince(province);
+        p.setExpectedCityId(cityId);
+        p.setUpdatedAt(java.time.LocalDateTime.now());
+        if (p.getId() == null) candidateProfileMapper.insert(p);
+        else candidateProfileMapper.updateById(p);
+    }
+
+    @Test
+    @Transactional
+    void recommend_noPreference_returnsLatestOnlineJobs() {
+        Long hrId = createHr("hr-rec1");
+        JobDto j1 = jobService().createJob(hrId, sampleCreateWithTitle("职位 A"));
+        JobDto j2 = jobService().createJob(hrId, sampleCreateWithTitle("职位 B"));
+        jobService().publishJob(hrId, j1.getId());
+        jobService().publishJob(hrId, j2.getId());
+
+        Long candidateId = createCandidate("c-rec1");
+        // 不存偏好
+        IPage<JobDto> result = jobService().recommendOnResume(candidateId, 1, 5);
+
+        assertTrue(result.getTotal() >= 2);
+        assertTrue(result.getRecords().stream().anyMatch(j -> j.getId().equals(j1.getId())));
+        assertTrue(result.getRecords().stream().anyMatch(j -> j.getId().equals(j2.getId())));
+    }
+
+    @Test
+    @Transactional
+    void recommend_industryMatch_rankedFirst() {
+        Long hrId = createHr("hr-rec2");
+        // 选 seed 字典里真实存在的两个不同 industryId
+        com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<com.example.recruitmentsystem.entity.DictIndustry> indQ =
+                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<com.example.recruitmentsystem.entity.DictIndustry>()
+                        .orderByAsc(com.example.recruitmentsystem.entity.DictIndustry::getSortOrder);
+        java.util.List<com.example.recruitmentsystem.entity.DictIndustry> inds = industryMapper.selectList(indQ);
+        if (inds.size() < 2) return; // seed 未注入则跳过
+        Long matchIndustryId = inds.get(0).getId();
+        Long otherIndustryId = inds.get(1).getId();
+
+        // 创建两个职位，第二个用 SQL 改 industryId
+        JobDto matchJob = jobService().createJob(hrId, sampleCreateWithTitle("Java 工程师 A"));
+        com.example.recruitmentsystem.entity.Job j1Entity = jobMapper.selectById(matchJob.getId());
+        j1Entity.setIndustryId(matchIndustryId);
+        jobMapper.updateById(j1Entity);
+        JobDto otherJob = jobService().createJob(hrId, sampleCreateWithTitle("Java 工程师 B"));
+        com.example.recruitmentsystem.entity.Job j2 = jobMapper.selectById(otherJob.getId());
+        j2.setIndustryId(otherIndustryId);
+        jobMapper.updateById(j2);
+        jobService().publishJob(hrId, matchJob.getId());
+        jobService().publishJob(hrId, otherJob.getId());
+
+        Long candidateId = createCandidate("c-rec2");
+        savePreference(candidateId, "Java", matchIndustryId, null, null);
+
+        IPage<JobDto> result = jobService().recommendOnResume(candidateId, 1, 5);
+
+        assertTrue(result.getRecords().size() >= 1);
+        // 行业匹配的应排在前面
+        JobDto first = result.getRecords().get(0);
+        assertEquals(matchIndustryId, first.getIndustryId(), "行业匹配的应排第一");
+    }
+
+    @Test
+    @Transactional
+    void recommend_keywordMatch_viaAnyOfThreeFields() {
+        Long hrId = createHr("hr-rec3");
+        // 走 createJob 走完整创建路径（自动注入 company/companyId）
+        JobCreateRequest r1 = sampleCreateWithTitle("Java 工程师");
+        JobDto j1 = jobService().createJob(hrId, r1);
+        jobMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<com.example.recruitmentsystem.entity.Job>()
+                .eq(com.example.recruitmentsystem.entity.Job::getId, j1.getId())
+                .set(com.example.recruitmentsystem.entity.Job::getRequirements, "无关")
+                .set(com.example.recruitmentsystem.entity.Job::getKeywords, "无关"));
+        jobService().publishJob(hrId, j1.getId());
+
+        JobCreateRequest r2 = sampleCreateWithTitle("数据分析师");
+        JobDto j2 = jobService().createJob(hrId, r2);
+        jobMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<com.example.recruitmentsystem.entity.Job>()
+                .eq(com.example.recruitmentsystem.entity.Job::getId, j2.getId())
+                .set(com.example.recruitmentsystem.entity.Job::getRequirements, "熟悉 Java")
+                .set(com.example.recruitmentsystem.entity.Job::getKeywords, "无关"));
+        jobService().publishJob(hrId, j2.getId());
+
+        JobCreateRequest r3 = sampleCreateWithTitle("前端开发");
+        JobDto j3 = jobService().createJob(hrId, r3);
+        jobMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<com.example.recruitmentsystem.entity.Job>()
+                .eq(com.example.recruitmentsystem.entity.Job::getId, j3.getId())
+                .set(com.example.recruitmentsystem.entity.Job::getRequirements, "React")
+                .set(com.example.recruitmentsystem.entity.Job::getKeywords, "Java, Vue"));
+        jobService().publishJob(hrId, j3.getId());
+
+        Long candidateId = createCandidate("c-rec3");
+        savePreference(candidateId, "Java", null, null, null);
+
+        IPage<JobDto> result = jobService().recommendOnResume(candidateId, 1, 10);
+
+        // 三条都应该出现在候选集合（任一字段 LIKE Java）
+        assertTrue(result.getTotal() >= 3, "三个职位 title/requirements/keywords 各有一个 Java 命中，全部应进入候选集合");
+        assertTrue(result.getRecords().stream().anyMatch(j -> j.getId().equals(j1.getId())));
+        assertTrue(result.getRecords().stream().anyMatch(j -> j.getId().equals(j2.getId())));
+        assertTrue(result.getRecords().stream().anyMatch(j -> j.getId().equals(j3.getId())));
+    }
+
+    @Test
+    @Transactional
+    void recommend_provinceMatchWithoutCity_matchCityTakesPriority() {
+        Long hrId = createHr("hr-rec4");
+        // sampleCreateWithTitle 的 default city 取自 seed 字典（北京）
+        // 走 createJob 走完整创建路径（validateAndResolveProvince 会把 city 的 province 写入 job.province）
+        JobDto j1 = jobService().createJob(hrId, sampleCreateWithTitle("北京岗位"));
+        String jobProvince = j1.getProvince();
+        jobService().publishJob(hrId, j1.getId());
+
+        Long candidateId = createCandidate("c-rec4");
+        // 偏好：只填省份（不填 cityId）
+        savePreference(candidateId, null, null, jobProvince, null);
+
+        IPage<JobDto> result = jobService().recommendOnResume(candidateId, 1, 5);
+        assertTrue(result.getRecords().stream().anyMatch(j -> j.getId().equals(j1.getId())),
+                "省份匹配应入选（即使没填具体城市）");
+    }
+
+    @Test
+    @Transactional
+    void recommend_tokenSplitting_findsJobsByPartialKeyword() {
+        Long hrId = createHr("hr-rec5");
+        JobDto j1 = jobService().createJob(hrId, sampleCreateWithTitle("高级 Python 数据分析"));
+        jobService().publishJob(hrId, j1.getId());
+
+        Long candidateId = createCandidate("c-rec5");
+        // 偏好 position = "Python 数据"
+        savePreference(candidateId, "Python 数据", null, null, null);
+
+        IPage<JobDto> result = jobService().recommendOnResume(candidateId, 1, 10);
+        assertTrue(result.getRecords().stream().anyMatch(j -> j.getId().equals(j1.getId())),
+                "拆词后任一命中即可（Python 或 数据）");
+    }
+
+    @Test
+    @Transactional
+    void recommend_nullCandidate_returnsLatestOnlineJobs() {
+        Long hrId = createHr("hr-rec6");
+        JobDto j1 = jobService().createJob(hrId, sampleCreateWithTitle("匿名访问"));
+        jobService().publishJob(hrId, j1.getId());
+
+        IPage<JobDto> result = jobService().recommendOnResume(null, 1, 5);
+        assertTrue(result.getRecords().stream().anyMatch(j -> j.getId().equals(j1.getId())),
+                "匿名访问不应报错，退化为最新发布");
+    }
+
+    /**
+     * v0.7.3.1：连续中文偏好"系统架构师"应匹配"系统设计架构师"。
+     *
+     * <p>原方案按整串包含（String.contains / LIKE）匹配，"系统架构师"不是
+     * "系统设计架构师"的连续子串，所以匹配不上。增量 1.1 增加 2-char 滑动
+     * 串回退（"系统"/"统架"/"架构"/"构师"）作为附加 token，SQL 任一命中即入选。</p>
+     */
+    @Test
+    @Transactional
+    void recommend_consecutiveChinesePosition_matchesNonContiguousTitle() {
+        Long hrId = createHr("hr-rec-cn");
+        JobDto j1 = jobService().createJob(hrId, sampleCreateWithTitle("系统设计架构师"));
+        jobService().publishJob(hrId, j1.getId());
+
+        Long candidateId = createCandidate("c-rec-cn");
+        // 偏好：连续中文（无空白）"系统架构师"
+        savePreference(candidateId, "系统架构师", null, null, null);
+
+        IPage<JobDto> result = jobService().recommendOnResume(candidateId, 1, 10);
+        assertTrue(result.getRecords().stream().anyMatch(j -> j.getId().equals(j1.getId())),
+                "2-char 滑动串应让'系统架构师'匹配'系统设计架构师'");
     }
 }

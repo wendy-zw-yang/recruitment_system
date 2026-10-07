@@ -13,5 +13,7 @@ export const jobApi = {
   // 候选人 / 公开
   list: (params) => http.get('/api/jobs', { params }),
   detail: (id) => http.get(`/api/jobs/${id}`),
-  toggleFavorite: (id) => http.post(`/api/jobs/${id}/favorite`)
+  toggleFavorite: (id) => http.post(`/api/jobs/${id}/favorite`),
+  // v0.7.3：候选人首页"推荐职位"（按偏好 4 维度打分排序）
+  recommended: (params) => http.get('/api/jobs/recommended', { params })
 }
