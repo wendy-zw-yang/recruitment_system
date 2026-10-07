@@ -127,19 +127,16 @@ public class ProfileServiceImpl implements ProfileService {
             p.setUserId(candidateId);
             p.setCreatedAt(now);
         }
-        // v0.7.3：4 个偏好字段全部持久化（之前 expectedIndustry/expectedCity 仅前端展示占位）
-        if (req.getExpectedPosition() != null) {
-            p.setExpectedPosition(req.getExpectedPosition().isBlank() ? null : req.getExpectedPosition().trim());
-        }
-        if (req.getExpectedIndustryId() != null) {
-            p.setExpectedIndustryId(req.getExpectedIndustryId());
-        }
-        if (req.getExpectedProvince() != null) {
-            p.setExpectedProvince(req.getExpectedProvince().isBlank() ? null : req.getExpectedProvince().trim());
-        }
-        if (req.getExpectedCityId() != null) {
-            p.setExpectedCityId(req.getExpectedCityId());
-        }
+        // v0.7.3.2：4 个偏好字段全部**赋值**（请求字段即为期望最终状态，null=清空）
+        // 之前的 `if (req.getXxx != null)` 守卫导致清空偏好时 id 字段不会被覆盖（保留旧值）
+        // Bug 现象：前端 el-select clearable 设为 null → 后端跳过写入 → DB 仍存旧值
+        // 修复：去掉 null 守卫，null 视为"清空"，blank 字符串视为"清空"
+        p.setExpectedPosition(req.getExpectedPosition() == null || req.getExpectedPosition().isBlank()
+                ? null : req.getExpectedPosition().trim());
+        p.setExpectedIndustryId(req.getExpectedIndustryId());
+        p.setExpectedProvince(req.getExpectedProvince() == null || req.getExpectedProvince().isBlank()
+                ? null : req.getExpectedProvince().trim());
+        p.setExpectedCityId(req.getExpectedCityId());
         p.setUpdatedAt(now);
         if (p.getId() == null) {
             candidateProfileMapper.insert(p);

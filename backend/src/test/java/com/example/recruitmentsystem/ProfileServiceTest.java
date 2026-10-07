@@ -9,6 +9,8 @@ import com.example.recruitmentsystem.dto.profile.UpdateProfileRequest;
 import com.example.recruitmentsystem.entity.Company;
 import com.example.recruitmentsystem.entity.User;
 import com.example.recruitmentsystem.mapper.CompanyMapper;
+import com.example.recruitmentsystem.mapper.DictCityMapper;
+import com.example.recruitmentsystem.mapper.DictIndustryMapper;
 import com.example.recruitmentsystem.mapper.UserMapper;
 import com.example.recruitmentsystem.service.profile.ProfileService;
 import org.junit.jupiter.api.Test;
@@ -37,6 +39,8 @@ class ProfileServiceTest {
     @Autowired private ProfileService profileService;
     @Autowired private UserMapper userMapper;
     @Autowired private CompanyMapper companyMapper;
+    @Autowired private DictIndustryMapper industryMapper;
+    @Autowired private DictCityMapper cityMapper;
 
     private Long createUser(String email, String role, String password) {
         User u = new User();
@@ -168,6 +172,107 @@ class ProfileServiceTest {
         profileService.updatePreference(candidateId, second);
 
         assertEquals("高级 Java 工程师", profileService.getPreference(candidateId).getExpectedPosition());
+    }
+
+    // ============ v0.7.3.2 回归：清空偏好必须真正清空 DB ============
+    //
+    // Bug 现象：候选人保存偏好后改回顶部 navbar 清空（el-select 触发 null），
+    // 后端因 if (req.getXxx != null) 守卫跳过写入，DB 仍存旧值；
+    // 下次首页 SQL 推荐仍按旧偏好筛选 + 偏好设置页又自动填上旧值。
+    //
+    // 修复：去掉 null 守卫，null/blank 视为清空。
+
+    @Test
+    @Transactional
+    void preference_clearAllFieldsWithNull_shouldPersistAsNull() {
+        Long candidateId = createUser("p8-clear", "CANDIDATE", "Password123");
+        // 取 seed 字典中真实存在的 id（避免 FK 约束失败）
+        Long realIndustryId = industryMapper.selectList(
+                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<com.example.recruitmentsystem.entity.DictIndustry>()
+                        .orderByAsc(com.example.recruitmentsystem.entity.DictIndustry::getSortOrder))
+                .get(0).getId();
+        Long realCityId = cityMapper.selectList(
+                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<com.example.recruitmentsystem.entity.DictCity>()
+                        .orderByAsc(com.example.recruitmentsystem.entity.DictCity::getSortOrder))
+                .get(0).getId();
+
+        // 1. 先保存完整偏好（4 字段全填）
+        CandidatePreferenceDto saved = new CandidatePreferenceDto();
+        saved.setExpectedPosition("Java 工程师");
+        saved.setExpectedIndustryId(realIndustryId);
+        saved.setExpectedProvince("浙江");
+        saved.setExpectedCityId(realCityId);
+        profileService.updatePreference(candidateId, saved);
+        assertEquals("Java 工程师", profileService.getPreference(candidateId).getExpectedPosition());
+
+        // 2. 清空（前端 el-select clearable 触发 null）
+        CandidatePreferenceDto cleared = new CandidatePreferenceDto();
+        // 4 字段全部 null / blank
+        profileService.updatePreference(candidateId, cleared);
+
+        // 3. 重新读取必须为空
+        CandidatePreferenceDto read = profileService.getPreference(candidateId);
+        assertTrue(read.getExpectedPosition() == null || read.getExpectedPosition().isEmpty(),
+                "期望职位应被清空，但 DB 仍存 " + read.getExpectedPosition());
+        // v0.7.3.2 关键：id 字段必须被清空（之前 bug 是 id 字段保留旧值）
+        assertEquals(null, read.getExpectedIndustryId(), "行业 id 未清空（v0.7.3.2 bug）");
+        assertEquals(null, read.getExpectedProvince(), "省份未清空");
+        assertEquals(null, read.getExpectedCityId(), "城市 id 未清空（v0.7.3.2 bug）");
+    }
+
+    @Test
+    @Transactional
+    void preference_clearTextFieldWithBlankString_shouldPersistAsNull() {
+        Long candidateId = createUser("p9-blank", "CANDIDATE", "Password123");
+        CandidatePreferenceDto saved = new CandidatePreferenceDto();
+        saved.setExpectedPosition("Java 工程师");
+        profileService.updatePreference(candidateId, saved);
+
+        // 发送空白字符串
+        CandidatePreferenceDto cleared = new CandidatePreferenceDto();
+        cleared.setExpectedPosition("   ");  // 全空白
+        cleared.setExpectedIndustryId(null);
+        cleared.setExpectedProvince("");
+        cleared.setExpectedCityId(null);
+        profileService.updatePreference(candidateId, cleared);
+
+        CandidatePreferenceDto read = profileService.getPreference(candidateId);
+        assertTrue(read.getExpectedPosition() == null || read.getExpectedPosition().isEmpty(),
+                "空白字符串应被识别为清空");
+        assertEquals(null, read.getExpectedProvince());
+    }
+
+    @Test
+    @Transactional
+    void preference_partialUpdate_overwritesOnlyGivenFields_clearsNull() {
+        Long candidateId = createUser("p10-partial", "CANDIDATE", "Password123");
+        Long realIndustryId = industryMapper.selectList(
+                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<com.example.recruitmentsystem.entity.DictIndustry>()
+                        .orderByAsc(com.example.recruitmentsystem.entity.DictIndustry::getSortOrder))
+                .get(0).getId();
+        Long realCityId = cityMapper.selectList(
+                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<com.example.recruitmentsystem.entity.DictCity>()
+                        .orderByAsc(com.example.recruitmentsystem.entity.DictCity::getSortOrder))
+                .get(0).getId();
+
+        // 先存行业 + 城市
+        CandidatePreferenceDto first = new CandidatePreferenceDto();
+        first.setExpectedPosition("Java");
+        first.setExpectedIndustryId(realIndustryId);
+        first.setExpectedProvince("浙江");
+        first.setExpectedCityId(realCityId);
+        profileService.updatePreference(candidateId, first);
+
+        // 用户修改期望职位为 "高级 Java"，其它不动（前端 payload 不携带 id 字段时序列化仍会带 null）
+        CandidatePreferenceDto second = new CandidatePreferenceDto();
+        second.setExpectedPosition("高级 Java");
+        // industryId/province/cityId 不设 → null → 应清空（v0.7.3.2 行为）
+        profileService.updatePreference(candidateId, second);
+
+        CandidatePreferenceDto read = profileService.getPreference(candidateId);
+        assertEquals("高级 Java", read.getExpectedPosition());
+        // v0.7.3.2：partial update 行为是"以请求为最终状态"——未传字段视为清空
+        assertEquals(null, read.getExpectedIndustryId(), "partial update 必须清空未传 id 字段（v0.7.3.2 当前行为）");
     }
 
     // ============ HR 公司自管理 ============

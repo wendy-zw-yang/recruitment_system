@@ -3,6 +3,7 @@ import { onMounted, ref, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useApplicationStore } from '@/stores/useApplicationStore'
 import { jobApi } from '@/api/job'
+import { profileApi } from '@/api/profile'
 import JobListCard from '@/views/common/JobListCard.vue'
 
 const router = useRouter()
@@ -64,11 +65,27 @@ const recommendedTotal = ref(0)
 /** 兜底列表：偏好过滤无结果时显示最新发布 5 条 */
 const fallbackJobs = ref([])
 const jobsLoading = ref(false)
+/** v0.7.3.3：候选人偏好是否已设置（用于空状态文案区分） */
+const hasPreferenceSet = ref(false)
 
 async function loadRecommended() {
   jobsLoading.value = true
   fallbackJobs.value = []
   try {
+    // v0.7.3.3：先检查偏好是否已设置（用于空状态文案区分"无偏好" vs "无匹配"）
+    try {
+      const pref = await profileApi.getPreference()
+      hasPreferenceSet.value = Boolean(
+        (pref.expectedPosition && pref.expectedPosition.trim()) ||
+        pref.expectedIndustryId ||
+        (pref.expectedProvince && pref.expectedProvince.trim()) ||
+        pref.expectedCityId
+      )
+    } catch (e) {
+      console.warn('CandidateHome getPreference failed:', e)
+      hasPreferenceSet.value = false
+    }
+
     const page = await jobApi.recommended({ pageNum: 1, pageSize: 5 })
     recommendedJobs.value = page?.records || []
     recommendedTotal.value = page?.total || 0
@@ -193,12 +210,21 @@ watch(
       <div v-if="jobsLoading" class="loading">加载中…</div>
 
       <template v-else>
-        <!-- 无匹配但有兜底：显示提示 + 推荐最新发布 -->
+        <!-- v0.7.3.3：根据"是否设置过偏好"决定空状态文案 -->
+        <!-- 无匹配但有兜底 -->
         <div v-if="recommendedJobs.length === 0 && fallbackJobs.length > 0">
           <div class="empty-state">
             <div class="empty-state__icon">🔍</div>
-            <h3 class="empty-state__title">未找到符合您偏好的职位</h3>
-            <p class="empty-state__desc">下面是平台最新在招岗位，你可以先看看，也可以去<a class="link" @click="router.push('/profile?tab=preference')">调整偏好</a>后刷新</p>
+            <h3 class="empty-state__title">{{ hasPreferenceSet ? '未找到符合您偏好的职位' : '还没有完全匹配的职位' }}</h3>
+            <p class="empty-state__desc">
+              {{ hasPreferenceSet
+                ? '下面是平台最新在招岗位，你可以先看看，也可以去调整偏好后刷新'
+                : '下面是平台最新在招岗位，你可以先看看，也可以去设置偏好获得更精准推荐'
+              }}
+              <a class="link" @click="router.push('/profile?tab=preference')">
+                {{ hasPreferenceSet ? '调整偏好 →' : '设置求职偏好 →' }}
+              </a>
+            </p>
           </div>
           <h4 class="fallback-title">最新在线岗位</h4>
           <div class="job-list">
@@ -231,10 +257,13 @@ watch(
         </div>
       </template>
 
-      <!-- v0.7.3：未设偏好时引导去设置偏好 -->
-      <div v-if="!jobsLoading && recommendedTotal >= 5" class="set-pref-hint">
+      <!-- v0.7.3.4：恢复底部"调整 / 设置求职偏好"引导；按 hasPreferenceSet 切换文案 -->
+      <!-- 条件：当前有职位显示（无论有没有设偏好都显示；空状态分支已有自己的链接） -->
+      <div v-if="!jobsLoading && recommendedJobs.length > 0" class="set-pref-hint">
         <span>想要更精准的推荐？</span>
-        <a class="link" @click="router.push('/profile?tab=preference')">设置求职偏好 →</a>
+        <a class="link" @click="router.push('/profile?tab=preference')">
+          {{ hasPreferenceSet ? '调整求职偏好 →' : '设置求职偏好 →' }}
+        </a>
       </div>
     </section>
 
