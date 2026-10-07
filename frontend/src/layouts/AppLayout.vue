@@ -27,7 +27,6 @@ const navItems = computed(() => {
   } else if (auth.isAdmin) {
     items.push({ label: '用户管理', to: '/admin/users/audit' })
     items.push({ label: '公司审核', to: '/admin/companies/audit' })
-    items.push({ label: '消息', placeholder: true })
   }
   return items
 })

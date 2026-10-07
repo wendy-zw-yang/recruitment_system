@@ -22,6 +22,7 @@ const routes = [
   // §9 管理员审核（v0.4：UC-35 职位审核删除）
   { path: '/admin/users/audit', name: 'admin-users-audit', component: () => import('@/views/admin/UserAudit.vue'), meta: { roles: ['ADMIN'] } },
   { path: '/admin/companies/audit', name: 'admin-companies-audit', component: () => import('@/views/admin/CompanyAudit.vue'), meta: { roles: ['ADMIN'] } },
+  { path: '/admin/dict', name: 'admin-dict', component: () => import('@/views/admin/DictAdmin.vue'), meta: { roles: ['ADMIN'] } },
   { path: '/forbidden', name: 'forbidden', component: () => import('@/views/common/Forbidden.vue') },
   { path: '/:pathMatch(.*)*', component: () => import('@/views/common/NotFound.vue') }
 ]

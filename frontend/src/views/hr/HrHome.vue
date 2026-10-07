@@ -103,7 +103,6 @@ function goCandidateDetail(app) {
 const quickActions = [
   { icon: '+', title: '发布新职位', action: 'publish' },
   { icon: '📥', title: '简历收件箱', action: 'inbox' },
-  { icon: '🔍', title: '搜索人才', disabled: true },
   { icon: '💬', title: '消息中心', action: 'messages' }
 ]
 
@@ -388,9 +387,9 @@ watch(() => route.path, (newPath) => {
 
 .quick-bar {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 12px;
-  padding: 12px;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  padding: 16px;
   background: var(--panel-strong);
   border: 1px solid var(--line);
   border-radius: 16px;
@@ -402,9 +401,9 @@ watch(() => route.path, (newPath) => {
   flex-direction: row;
   align-items: center;
   justify-content: center;
-  gap: 10px;
-  height: 56px;
-  padding: 0 16px;
+  gap: 12px;
+  height: 64px;
+  padding: 0 20px;
   border: 1px solid var(--line);
   border-radius: 12px;
   background: var(--bg);
@@ -415,7 +414,7 @@ watch(() => route.path, (newPath) => {
   transition: all 0.2s ease;
 }
 
-.quick-btn:hover {
+.quick-btn:hover:not(:disabled) {
   background: var(--primary-tint);
   border-color: var(--primary);
   color: var(--primary-deep);
@@ -426,23 +425,29 @@ watch(() => route.path, (newPath) => {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
+  width: 36px;
+  height: 36px;
   border-radius: 10px;
-  background: var(--panel-strong);
+  background: var(--primary-tint);
   color: var(--primary);
-  font-size: 16px;
+  font-size: 17px;
   font-weight: 700;
+  flex-shrink: 0;
+}
+
+.quick-btn__title {
+  font-size: 15px;
+  letter-spacing: 0.02em;
 }
 
 .quick-btn--primary {
-  background: var(--primary);
+  background: linear-gradient(135deg, var(--primary), var(--primary-deep));
   border-color: var(--primary);
   color: #fff;
 }
 
 .quick-btn--primary:hover {
-  background: var(--primary-deep);
+  background: linear-gradient(135deg, var(--primary-deep), var(--primary));
   border-color: var(--primary-deep);
   color: #fff;
 }
@@ -632,7 +637,7 @@ watch(() => route.path, (newPath) => {
     gap: 16px;
   }
   .quick-bar {
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: 1fr;
   }
   .main-grid {
     grid-template-columns: 1fr;

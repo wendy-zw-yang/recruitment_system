@@ -66,6 +66,29 @@ function onApply() {
 }
 
 /**
+ * v0.7.1：投递前即可咨询 HR。
+ *
+ * <p>放宽半开：候选人侧不再要求"必须先投递"才能发起会话；
+ * HR 侧仍要求有投递关系（详见 MessageService 设计文档）。</p>
+ */
+function onContactHr() {
+  if (!auth.isLoggedIn) {
+    ElMessage.warning('请先登录')
+    router.push({ name: 'login', query: { redirect: route.fullPath } })
+    return
+  }
+  if (!auth.isCandidate) {
+    ElMessage.warning('仅候选人可咨询 HR')
+    return
+  }
+  if (!job.value?.hrUserId) {
+    ElMessage.error('该职位暂无 HR 信息')
+    return
+  }
+  router.push({ path: '/messages', query: { peer: job.value.hrUserId } })
+}
+
+/**
  * 顶部"← 返回职位列表"：跳到 /jobs 无 query 参数，清除所有搜索/筛选条件。
  * 不要用 router.back()：上一页面可能带 keyword/cityName/favorited 等参数，
  * 会回到搜索后的列表而非干净的职位列表入口。
@@ -98,6 +121,13 @@ onMounted(loadDetail)
           <p class="salary">{{ salaryText }}</p>
         </div>
         <div class="head-actions">
+          <el-button
+            v-if="job.hrUserId"
+            round
+            @click="onContactHr"
+          >
+            💬 咨询 HR
+          </el-button>
           <el-button
             :type="job.favorited ? 'danger' : 'default'"
             :icon="job.favorited ? 'StarFilled' : 'Star'"

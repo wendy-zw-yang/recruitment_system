@@ -17,7 +17,7 @@ const stats = reactive({
 const quickActions = [
   { icon: '👥', title: '用户管理', desc: '启停账号 / 重置密码 / 改角色', route: '/admin/users/audit' },
   { icon: '🏢', title: '公司审核', desc: '核实 HR 公司资质', route: '/admin/companies/audit' },
-  { icon: '📚', title: '字典维护', desc: '维护行业 / 城市 / 技能建议池', action: 'coming' }
+  { icon: '📚', title: '字典维护', desc: '维护行业 / 城市 / 技能建议池', route: '/admin/dict' }
 ]
 
 function goAudit(item) {
@@ -118,11 +118,15 @@ watch(() => route.path, (newPath) => {
 
       <div class="empty-state">
         <div class="empty-state__icon">🛡️</div>
-        <h3 class="empty-state__title">2 类审核已上线</h3>
+        <h3 class="empty-state__title">2 类审核 + 字典维护 已上线</h3>
         <p class="empty-state__desc">
-          用户管理 + 公司审核（职位由 HR 自审自管，无需管理员介入）
+          用户管理 + 公司审核（职位由 HR 自审自管，无需管理员介入）；字典维护管理候选人 / HR 端下拉框的数据源
         </p>
-        <el-button type="primary" round @click="router.push('/admin/users/audit')">进入用户管理</el-button>
+        <div class="audit-cta">
+          <el-button type="primary" round @click="router.push('/admin/users/audit')">用户管理</el-button>
+          <el-button type="success" round @click="router.push('/admin/companies/audit')">公司审核</el-button>
+          <el-button round @click="router.push('/admin/dict')">字典维护</el-button>
+        </div>
       </div>
     </section>
 
@@ -363,7 +367,13 @@ watch(() => route.path, (newPath) => {
   font-size: 13px;
   color: var(--text-soft);
   margin-bottom: 18px;
-  max-width: 420px;
+  max-width: 520px;
+}
+.audit-cta {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: center;
 }
 
 .footer {
