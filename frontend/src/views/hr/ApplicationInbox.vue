@@ -28,7 +28,8 @@ const STATUS_LABEL = {
 }
 const STATUS_TYPE = {
   PENDING_REVIEW: 'info',
-  VIEWED_BY_HR: '',
+  // v0.7.4.5：空字符串 '' 改为 'info'，避免 el-tag type 渲染异常
+  VIEWED_BY_HR: 'info',
   RESUME_PASSED: 'primary',
   INTERVIEWING: 'warning',
   OFFERED: 'success',

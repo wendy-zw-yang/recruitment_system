@@ -352,7 +352,7 @@ DROP TABLE IF EXISTS `message`;
 CREATE TABLE `message` (
     `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键',
     `conversation_id` BIGINT NOT NULL COMMENT '关联 conversation.id',
-    `sender_id` BIGINT NOT NULL COMMENT '发送人 users.id；SYSTEM=0 特殊值',
+    `sender_id` BIGINT NULL COMMENT '发送人 users.id；SYSTEM 消息此列为 NULL（无真实发送人）',
     `sender_role` VARCHAR(32) NOT NULL COMMENT 'CANDIDATE / HR / SYSTEM',
     `job_id` BIGINT NULL COMMENT '关联职位（可空）',
     `content` TEXT NOT NULL COMMENT '消息内容',

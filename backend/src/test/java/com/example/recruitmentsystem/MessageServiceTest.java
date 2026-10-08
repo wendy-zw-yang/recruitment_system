@@ -23,6 +23,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -165,7 +166,8 @@ class MessageServiceTest {
         verify(messageMapper, times(1)).insert(msgCaptor.capture());
         Message sys = msgCaptor.getValue();
         assertEquals(Message.ROLE_SYSTEM, sys.getSenderRole());
-        assertEquals(0L, sys.getSenderId());
+        // v0.7.4.3：SYSTEM 消息 senderId=null（避免触发 fk_message_sender FK 异常）
+        assertNull(sys.getSenderId());
         assertEquals(50L, sys.getJobId());
         // 会话被创建
         verify(conversationMapper, times(1)).insert(any(Conversation.class));

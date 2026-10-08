@@ -87,6 +87,8 @@ public class ResumeServiceImpl implements ResumeService {
         resume.setCandidateId(candidateId);
         resume.setArchived(false);
         resumeMapper.insert(resume);
+        // v0.7.3：标记 AI 重新打分
+        com.example.recruitmentsystem.service.impl.JobServiceImpl.markRecommendPending(candidateId);
 
         ResumeAttachment attachment = new ResumeAttachment();
         attachment.setResumeId(resume.getId());
@@ -137,6 +139,9 @@ public class ResumeServiceImpl implements ResumeService {
         resume.setProjects(toJson(request.getProjects()));
         resume.setSkills(toSkillsText(request.getSkills()));
         resumeMapper.updateById(resume);
+
+        // v0.7.3：标记 AI 重新打分
+        com.example.recruitmentsystem.service.impl.JobServiceImpl.markRecommendPending(candidateId);
 
         Resume reloaded = resumeMapper.selectById(resumeId);
         ResumeAttachment att = latestAttachment(resumeId);

@@ -1,9 +1,10 @@
 <script setup>
-import { onMounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useApplicationStore } from '@/stores/useApplicationStore'
 
+const route = useRoute()
 const router = useRouter()
 const store = useApplicationStore()
 
@@ -13,6 +14,8 @@ const total = ref(0)
 
 const STATUS_LABEL = {
   PENDING_REVIEW: '待 HR 查看',
+  // v0.7.4.5：补全 VIEWED_BY_HR 映射（之前后端隐藏 + 前端无此 key 会显示原 enum 字符串）
+  VIEWED_BY_HR:   '已查看',
   RESUME_PASSED: '简历通过',
   INTERVIEWING: '面试中',
   OFFERED: '已发 Offer',
@@ -23,6 +26,8 @@ const STATUS_LABEL = {
 
 const STATUS_TYPE = {
   PENDING_REVIEW: 'info',
+  // v0.7.4.5：补全 + 修正（之前是 '' 空字符串会让 el-tag 渲染异常或回退默认）
+  VIEWED_BY_HR:   'info',
   RESUME_PASSED: 'primary',
   INTERVIEWING: 'warning',
   OFFERED: 'success',
@@ -32,6 +37,26 @@ const STATUS_TYPE = {
 }
 
 onMounted(loadList)
+
+/**
+ * v0.7.4.4：监听 route.path，进入 /applications/mine 强制刷新列表。
+ *
+ * 历史 bug：完全依赖 onMounted 触发 fetchMine。某些场景下 onMounted 不触发：
+ *  - 用户从 /applications/mine 通过 nav 跳到 /jobs，再投第二个职位后跳回 /applications/mine
+ *    理论上会重新挂载并触发 onMounted，但实际可能因 Vue Router 行为差异未触发
+ *  - keep-alive 缓存（未来可能加）
+ * 修复：加 watch 兜底，确保 store 数据最新。
+ * 注：store.apply 也在 v0.7.4.4 改为成功后立即 fetchMine，双保险。
+ */
+watch(
+  () => route.path,
+  (newPath) => {
+    if (newPath === '/applications/mine') {
+      pageNum.value = 1   // 切回首页时回到第 1 页
+      loadList()
+    }
+  }
+)
 
 async function loadList() {
   try {
@@ -52,6 +77,7 @@ async function onWithdraw(item) {
   try {
     await store.withdraw(item.id)
     ElMessage.success('已撤回')
+    // v0.7.4.4：store.withdraw 内部已 fetchMine 全量刷新，此处 loadList 仍调用（覆盖分页参数）
     await loadList()
   } catch (e) {
     ElMessage.error(e?.message || '撤回失败')

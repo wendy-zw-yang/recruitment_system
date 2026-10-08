@@ -4,7 +4,15 @@ import { computed } from 'vue'
 const props = defineProps({
   job: { type: Object, required: true },
   showActions: { type: Boolean, default: false },
-  busy: { type: Boolean, default: false }
+  busy: { type: Boolean, default: false },
+  /**
+   * v0.7.3：AI 智能匹配度（0-100）。null 时不显示标签。
+   * 调用方负责从 JobListCard.aiScore prop 传入（一般是 JobDto.aiScore）。
+   *
+   * <p>v0.7.4.2：仅显示 > 60 的高分匹配；≤ 60 的卡片**不**显示标签（避免低分职位被显眼标识误导用户）。
+   * 重排逻辑不受影响（高分仍排前）。</p>
+   */
+  aiScore: { type: Number, default: null }
 })
 
 const emit = defineEmits(['favorite', 'detail'])
@@ -36,6 +44,9 @@ function onDetail() {
       <div class="title-row">
         <h3 class="title">{{ job.title }}</h3>
         <span class="salary">{{ salaryText }}</span>
+        <el-tag v-if="aiScore != null && aiScore > 60" type="success" size="small" effect="dark" class="ai-score-tag">
+          AI 智能匹配度：{{ aiScore }}
+        </el-tag>
       </div>
       <p class="company">{{ job.companyName || '—' }} · {{ [job.province, job.cityName].filter(Boolean).join(' · ') || '不限城市' }}</p>
       <p v-if="job.description" class="snippet">{{ job.description.slice(0, 80) }}{{ job.description.length > 80 ? '…' : '' }}</p>
@@ -84,4 +95,9 @@ function onDetail() {
 .company { font-size: 13px; color: var(--text-soft); margin-bottom: 4px; }
 .snippet { font-size: 12px; color: var(--text-muted); line-height: 1.5; max-width: 720px; }
 .job-card__side { display: flex; align-items: center; gap: 8px; }
+.ai-score-tag {
+  flex-shrink: 0;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
 </style>

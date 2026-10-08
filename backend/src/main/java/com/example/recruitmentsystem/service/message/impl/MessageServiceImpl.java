@@ -17,6 +17,7 @@ import com.example.recruitmentsystem.service.message.SseEmitterManager;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -42,8 +43,11 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class MessageServiceImpl implements MessageService, MessageSendService {
 
-    /** SYSTEM 消息 senderId 占位（0 表示系统） */
-    private static final Long SYSTEM_SENDER_ID = 0L;
+    /** SYSTEM 消息 senderId 占位（null 表示系统，无真实用户）。
+     * v0.7.4.3 修复：原值 0L 会触发 fk_message_sender 外键异常（users.id=0 不存在），
+     * 改用 null 走 FK 旁路（schema 已允许 sender_id 为 NULL）。
+     * 注意：MessageServiceImpl.sendMessage 调用方传真实 senderId，本字段仅 sendSystemMessage 使用。 */
+    private static final Long SYSTEM_SENDER_ID = null;
 
     private final MessageMapper messageMapper;
     private final MessageAttachmentMapper attachmentMapper;
@@ -141,7 +145,10 @@ public class MessageServiceImpl implements MessageService, MessageSendService {
     // ============ §4 撤回触发：系统消息 ============
 
     @Override
-    @Transactional
+    // v0.7.4.3 修复：REQUIRES_NEW 独立事务——撤回流程 (§4) 中 sendSystemMessage 异常不应让外层
+    // withdraw 事务被标记 rollback-only。REQUIRED 默认会污染外层事务，即使 try/catch 捕获了
+    // 原异常，提交时仍会抛 UnexpectedRollbackException，导致 application 状态更新被一并回滚。
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public Long sendSystemMessage(Long hrUserId, Long candidateId, String content, Long jobId) {
         Conversation conv = conversationMapper.findByHrAndCandidate(hrUserId, candidateId);
         if (conv == null) {

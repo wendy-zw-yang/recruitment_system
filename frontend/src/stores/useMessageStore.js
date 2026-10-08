@@ -3,6 +3,7 @@ import { ref, computed } from 'vue'
 import { messageApi } from '@/api/message'
 import { createMessageSseClient } from '@/api/sse'
 import { useAuthStore } from '@/stores/useAuthStore'
+import { useRecommendStore } from '@/stores/useRecommendStore'
 
 /**
  * §5 消息中心 Pinia store。
@@ -65,9 +66,20 @@ export const useMessageStore = defineStore('message', () => {
       onConnect: () => { sseConnected.value = true },
       onDisconnect: () => { sseConnected.value = false },
       onNewMessage: handleNewMessage,
-      onReadReceipt: handleReadReceipt
+      onReadReceipt: handleReadReceipt,
+      onRecommendationReady: handleRecommendationReady
     })
     sseClient.connect()
+  }
+
+  /**
+   * v0.7.3：AI 推荐打分完成事件。payload = {scores: {jobId: score}, jobsCount}
+   * 转发到 useRecommendStore，由 CandidateHome.vue 监听并刷新。
+   */
+  function handleRecommendationReady(event) {
+    const scores = event?.scores || {}
+    const recommendStore = useRecommendStore()
+    recommendStore.setEvent(event, scores)
   }
 
   function teardownSse() {

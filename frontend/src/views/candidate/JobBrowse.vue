@@ -149,10 +149,44 @@ onMounted(async () => {
   await Promise.all([fetchIndustries(), fetchCities()])
   fetchList()
 })
+
+/**
+ * v0.7.3：从首页 / CandidateHome.vue "查看更多" 进入时带 query.recommended=true
+ * → 拉取 AI 排序后的职位列表（pageSize=10），附带 aiScore 用于卡片展示。
+ */
+const isRecommendedMode = ref(false)
+
+async function fetchRecommendedList() {
+  loading.value = true
+  try {
+    const page = await jobApi.recommended({ pageNum: 1, pageSize: 10 })
+    records.value = page.records || []
+    total.value = page.total || 0
+  } finally {
+    loading.value = false
+  }
+}
+
+// 监听 query.recommended 变化，切换数据源
+watch(() => route.query.recommended, async (val) => {
+  isRecommendedMode.value = val === 'true' || val === true
+  if (isRecommendedMode.value) {
+    await fetchRecommendedList()
+  } else if (route.path === '/jobs') {
+    fetchList()
+  }
+}, { immediate: true })
 </script>
 
 <template>
   <div class="page-shell job-browse">
+    <!-- v0.7.3：AI 推荐模式下显示标题条 -->
+    <div v-if="isRecommendedMode" class="recommend-banner">
+      <span class="recommend-banner__icon">🤖</span>
+      <span class="recommend-banner__text">
+        以下是根据你的求职偏好 + 简历 AI 智能匹配的职位
+      </span>
+    </div>
     <div class="search-bar">
       <el-input
         v-model="query.keyword"
@@ -253,6 +287,23 @@ onMounted(async () => {
 
 <style scoped>
 .job-browse { padding-top: 96px; }
+.recommend-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 18px;
+  margin-bottom: 18px;
+  border-radius: 12px;
+  background: linear-gradient(90deg, #ede9fe 0%, #ddd6fe 100%);
+  border: 1px solid #c4b5fd;
+  color: #4c1d95;
+  font-size: 13px;
+  font-weight: 500;
+}
+.recommend-banner__icon {
+  font-size: 18px;
+  flex-shrink: 0;
+}
 .search-bar {
   display: grid;
   grid-template-columns: 2fr 1.2fr 1fr 1fr 1fr auto;

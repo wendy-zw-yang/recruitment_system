@@ -143,6 +143,8 @@ public class ProfileServiceImpl implements ProfileService {
         } else {
             candidateProfileMapper.updateById(p);
         }
+        // v0.7.3：标记下次重新跑 AI
+        com.example.recruitmentsystem.service.impl.JobServiceImpl.markRecommendPending(candidateId);
         return getPreference(candidateId);
     }
 

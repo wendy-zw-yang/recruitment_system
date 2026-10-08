@@ -345,6 +345,42 @@ class ApplicationServiceTest {
         assertNotNull(hrDetail.getAiReason(), "HR 详情应可见 aiReason");
     }
 
+    /**
+     * v0.7.4.5 回归：候选人「我的投递」应显示 VIEWED_BY_HR 状态的投递。
+     *
+     * <p>历史 bug：listMine 用 {@code .ne(VIEWED_BY_HR)} 隐藏 VIEWED_BY_HR 状态。
+     * HR 把状态从 PENDING_REVIEW 推进到 VIEWED_BY_HR 后，候选人侧列表突然少一条；
+     * 候选人无法再次投递同一职位（防重逻辑）→ 永远看不到该投递。</p>
+     *
+     * <p>本测试：候选人投递 → HR 推进到 VIEWED_BY_HR → listMine 仍应包含此 application，
+     * 且 status = VIEWED_BY_HR。</p>
+     */
+    @Test
+    @Transactional
+    void listMine_includesViewedByHr_status() {
+        Long candidateId = createCandidate("c-viewed");
+        Long hrUserId = createHrWithCompany("h-viewed");
+        Job job = createOnlineJob(hrUserId);
+        Long resumeId = createActiveResume(candidateId);
+
+        ApplicationServiceImpl svc = newService(
+                mockResumeServiceWithActive(candidateId, resumeId), mockLlmOk());
+        ApplyResponse resp = svc.apply(candidateId, new ApplyRequest() {{ setJobId(job.getId()); }});
+
+        // HR 推进到 VIEWED_BY_HR
+        AdvanceStatusResponse r = svc.pushStatus(hrUserId, resp.getApplicationId(),
+                ApplicationServiceImpl.STATUS_VIEWED_BY_HR, null);
+        assertEquals(ApplicationServiceImpl.STATUS_VIEWED_BY_HR, r.getToStatus());
+
+        // 候选人 listMine 应**仍**包含此 application，状态为 VIEWED_BY_HR
+        IPage<ApplicationDto> minePage = svc.listMine(candidateId, 1, 10);
+        ApplicationDto mineDto = minePage.getRecords().stream()
+                .filter(a -> a.getId().equals(resp.getApplicationId())).findFirst().orElse(null);
+        assertNotNull(mineDto, "VIEWED_BY_HR 状态的投递必须出现在「我的投递」中");
+        assertEquals(ApplicationServiceImpl.STATUS_VIEWED_BY_HR, mineDto.getStatus(),
+                "状态字段必须是 VIEWED_BY_HR（而非被过滤）");
+    }
+
     // ============ withdraw ============
 
     @Test
@@ -572,5 +608,61 @@ class ApplicationServiceTest {
         IPage<ApplicationDto> withdrawnPage = svc.listForHr(hrUserId, q);
         assertEquals(1, withdrawnPage.getRecords().size());
         assertTrue(withdrawnPage.getRecords().get(0).getWithdrawn());
+    }
+
+    /**
+     * v0.7.4.3 回归：撤回流程的 sendSystemMessage 异常**不应**让外层 withdraw 事务回滚。
+     *
+     * <p>历史 bug：{@code sendSystemMessage} 是 {@code @Transactional}（REQUIRED 默认传播），
+     * 加入外层 {@code withdraw} 事务；任一异常会让整个外层事务被标记 rollback-only，
+     * 即使 try/catch 捕获了原异常，{@code withdraw} 提交时仍会抛 UnexpectedRollbackException，
+     * 导致 application 状态更新被一并回滚，用户看到"系统异常，请稍后重试"。</p>
+     *
+     * <p>本测试用 mock MessageService 抛运行时异常模拟 sendSystemMessage 失败；
+     * 验证：withdraw 正常返回 + application.status 实际变为 WITHDRAWN（事务已提交）。</p>
+     */
+    @Test
+    @Transactional
+    void withdraw_messageServiceThrows_stillCommitsStatusUpdate() {
+        Long candidateId = createCandidate("c-wdraw-msgerr");
+        Long hrUserId = createHrWithCompany("h-wdraw-msgerr");
+        Job job = createOnlineJob(hrUserId);
+        Long resumeId = createActiveResume(candidateId);
+
+        ResumeService rs = mockResumeServiceWithActive(candidateId, resumeId);
+
+        // 构造一个抛 RuntimeException 的 mock MessageService（模拟 sendSystemMessage 失败）
+        com.example.recruitmentsystem.service.message.MessageService throwingMsgService =
+                Mockito.mock(com.example.recruitmentsystem.service.message.MessageService.class);
+        Mockito.when(throwingMsgService.sendSystemMessage(
+                        Mockito.anyLong(), Mockito.anyLong(), Mockito.anyString(), Mockito.anyLong()))
+                .thenThrow(new RuntimeException("simulated system message failure"));
+
+        ApplicationServiceImpl svc = new ApplicationServiceImpl(
+                applicationMapper, historyMapper, noteMapper,
+                jobMapper, userMapper, companyMapper,
+                resumeMapper, resumeAttachmentMapper,
+                rs, mockLlmOk(),
+                throwingMsgService,    // 抛异常的 mock
+                new ObjectMapper());
+
+        ApplyResponse resp = svc.apply(candidateId, new ApplyRequest() {{ setJobId(job.getId()); }});
+
+        // 关键断言：withdraw 不应抛 UnexpectedRollbackException；status 应被提交为 WITHDRAWN
+        WithdrawResponse wr = svc.withdraw(candidateId, resp.getApplicationId());
+        assertEquals(ApplicationServiceImpl.STATUS_WITHDRAWN, wr.getStatus());
+
+        // 直接查 DB 确认：状态确实更新为 WITHDRAWN（外层事务已 commit）
+        Application app = applicationMapper.selectById(resp.getApplicationId());
+        assertEquals(ApplicationServiceImpl.STATUS_WITHDRAWN, app.getStatus(),
+                "withdraw 主流程必须在 system message 失败时仍能提交状态更新");
+
+        // 状态历史也被写入
+        java.util.List<ApplicationStatusHistory> histories = historyMapper.selectList(
+                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<ApplicationStatusHistory>()
+                        .eq(ApplicationStatusHistory::getApplicationId, resp.getApplicationId()));
+        assertTrue(histories.stream().anyMatch(h ->
+                        ApplicationServiceImpl.STATUS_WITHDRAWN.equals(h.getToStatus())),
+                "状态历史应包含 WITHDRAWN 记录");
     }
 }

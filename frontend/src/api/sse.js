@@ -1,7 +1,7 @@
 import { useAuthStore } from '@/stores/useAuthStore'
 
 /**
- * §5 消息中心 SSE 客户端。
+ * §5 消息中心 + v0.7.3 候选人推荐 SSE 客户端。
  *
  * <p>基于浏览器原生 EventSource（自动重连），不适合 axios 拦截器统一处理。</p>
  *
@@ -9,6 +9,7 @@ import { useAuthStore } from '@/stores/useAuthStore'
  * <ul>
  *   <li>{@code new_message} — 新消息（含 conversationId + message 全字段）</li>
  *   <li>{@code read_receipt} — 对方已读（含 conversationId + readerId + messageIds）</li>
+ *   <li>{@code recommendation_ready} — AI 推荐打分完成（含 scores: {jobId: score}, jobsCount）</li>
  * </ul>
  *
  * <p>用法：</p>
@@ -16,6 +17,7 @@ import { useAuthStore } from '@/stores/useAuthStore'
  *   const client = createMessageSseClient({
  *     onNewMessage: (event) => { ... },
  *     onReadReceipt: (event) => { ... },
+ *     onRecommendationReady: (event) => { ... },
  *     onConnect: () => { ... },
  *     onDisconnect: () => { ... }
  *   })
@@ -59,6 +61,14 @@ export function createMessageSseClient(handlers = {}) {
         handlers.onReadReceipt && handlers.onReadReceipt(payload)
       } catch (err) {
         console.warn('[messageSse] parse read_receipt failed', err)
+      }
+    })
+    source.addEventListener('recommendation_ready', (e) => {
+      try {
+        const payload = JSON.parse(e.data)
+        handlers.onRecommendationReady && handlers.onRecommendationReady(payload)
+      } catch (err) {
+        console.warn('[messageSse] parse recommendation_ready failed', err)
       }
     })
     source.onerror = () => {

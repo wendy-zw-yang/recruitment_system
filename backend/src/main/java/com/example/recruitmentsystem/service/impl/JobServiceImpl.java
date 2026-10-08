@@ -7,6 +7,7 @@ import com.example.recruitmentsystem.common.exception.BusinessException;
 import com.example.recruitmentsystem.dto.job.JobCreateRequest;
 import com.example.recruitmentsystem.dto.job.JobDto;
 import com.example.recruitmentsystem.dto.job.JobUpdateRequest;
+import com.example.recruitmentsystem.dto.resume.ResumeDto;
 import com.example.recruitmentsystem.entity.CandidateProfile;
 import com.example.recruitmentsystem.entity.Company;
 import com.example.recruitmentsystem.entity.DictCity;
@@ -15,6 +16,7 @@ import com.example.recruitmentsystem.entity.FavoriteJob;
 import com.example.recruitmentsystem.entity.Job;
 import com.example.recruitmentsystem.entity.User;
 import com.example.recruitmentsystem.llm.service.LlmJdService;
+import com.example.recruitmentsystem.llm.service.RecommendService;
 import com.example.recruitmentsystem.mapper.CandidateProfileMapper;
 import com.example.recruitmentsystem.mapper.CompanyMapper;
 import com.example.recruitmentsystem.mapper.DictCityMapper;
@@ -23,15 +25,23 @@ import com.example.recruitmentsystem.mapper.FavoriteJobMapper;
 import com.example.recruitmentsystem.mapper.JobMapper;
 import com.example.recruitmentsystem.mapper.UserMapper;
 import com.example.recruitmentsystem.service.JobService;
+import com.example.recruitmentsystem.service.ResumeService;
+import com.example.recruitmentsystem.service.message.SseEmitterManager;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 /**
@@ -66,6 +76,25 @@ public class JobServiceImpl implements JobService {
     private final DictCityMapper cityMapper;
     private final CandidateProfileMapper candidateProfileMapper;
     private final LlmJdService llmJdService;
+    // v0.7.3：AI 智能匹配度（异步 LLM 重排 + 评分）
+    private final RecommendService recommendService;
+    private final ResumeService resumeService;
+    private final SseEmitterManager sseManager;
+    private final ObjectMapper objectMapper;
+
+    // v0.7.3：候选人推荐分数缓存（userId → jobId → score，0-100）
+    // 失效时机：用户改简历 / 改偏好时清空（recommendPendingFlag 驱动）
+    // v0.7.4.1：visibility 从 private 提到 public，与 recommendPendingFlag 对齐，便于同包测试清理
+    public static final ConcurrentHashMap<Long, ConcurrentHashMap<Long, Integer>> recommendScoresCache
+            = new ConcurrentHashMap<>();
+
+    // v0.7.3：标记用户更新了偏好 / 简历，下次查询时需重新跑 AI
+    public static final ConcurrentHashMap<Long, Boolean> recommendPendingFlag = new ConcurrentHashMap<>();
+
+    /**
+     * v0.7.3：触发 AI 重排的阈值（候选人首页常见 pageSize=10，超过该值不触发避免 LLM 成本失控）。
+     */
+    private static final int AI_RERANK_MAX_JOBS = 10;
 
     // ============ HR 端 ============
 
@@ -314,6 +343,9 @@ public class JobServiceImpl implements JobService {
         int to = Math.min(from + pageSize, total);
         List<Job> pageRecords = scored.subList(from, to);
 
+        // v0.7.3：触发 AI 重排（仅：有候选人 + 简历 + 满足触发条件 + 候选数 ≤ AI_RERANK_MAX_JOBS）
+        tryTriggerAiPolish(candidateId, scored, industryId, cityId, province, tokens);
+
         return wrapAsPage(pageRecords, pageNum, pageSize, candidateId, (long) total);
     }
 
@@ -327,7 +359,192 @@ public class JobServiceImpl implements JobService {
         memPage.setRecords(jobs);
         IPage<JobDto> dtos = memPage.convert(this::enrich);
         fillFavorited(dtos, candidateId);
+        fillAiScore(dtos, candidateId);
+        // v0.7.4.1：决策 #2 落地——AI 重排完成后按 aiScore DESC 重排（高分优先），
+        // 无 aiScore 的卡片排到末尾。仅当 cache 有此 userId 数据时生效（说明 AI 已跑过）。
+        reorderByAiScore(dtos, candidateId);
         return dtos;
+    }
+
+    /**
+     * v0.7.4.1：决策 #2 落地——按 aiScore DESC 重排（高分优先）。
+     * <ul>
+     *   <li>仅当 {@code recommendScoresCache[userId]} 非空时生效（AI 已跑过）</li>
+     *   <li>aiScore 为 null 的卡片排到末尾（保持原顺序靠后）</li>
+     *   <li>同分按发布时间倒序（nullsLast）</li>
+     * </ul>
+     */
+    private void reorderByAiScore(IPage<JobDto> dtos, Long candidateId) {
+        if (candidateId == null) return;
+        ConcurrentHashMap<Long, Integer> userCache = recommendScoresCache.get(candidateId);
+        if (userCache == null || userCache.isEmpty()) return;
+        List<JobDto> records = dtos.getRecords();
+        if (records == null || records.size() <= 1) return;
+        records.sort((a, b) -> {
+            Integer sa = a.getAiScore();
+            Integer sb = b.getAiScore();
+            // 两者都 null → 保持原序
+            if (sa == null && sb == null) return 0;
+            // null 排最后
+            if (sa == null) return 1;
+            if (sb == null) return -1;
+            // DESC：高分在前
+            int cmp = Integer.compare(sb, sa);
+            if (cmp != 0) return cmp;
+            // 同分按发布时间倒序（nullsLast）
+            if (a.getPublishedAt() == null && b.getPublishedAt() == null) return 0;
+            if (a.getPublishedAt() == null) return 1;
+            if (b.getPublishedAt() == null) return -1;
+            return b.getPublishedAt().compareTo(a.getPublishedAt());
+        });
+    }
+
+    // ============ v0.7.3 AI 重排 + 分数推送 ============
+
+    /**
+     * 判断是否触发 AI 重排，满足条件则起 @Async 异步打分。
+     *
+     * <p>触发条件（任一为真即触发）：</p>
+     * <ul>
+     *   <li>{@code recommendPendingFlag[userId] == true}（用户改简历 / 改偏好触发）</li>
+     *   <li>首次访问 + 有简历 + 缓存为空（避免老用户重复触发）</li>
+     * </ul>
+     *
+     * <p>不触发条件：</p>
+     * <ul>
+     *   <li>用户未登录（candidateId == null）</li>
+     *   <li>用户无 ACTIVE 简历（返回 null）</li>
+     *   <li>候选集为空或超过 {@link #AI_RERANK_MAX_JOBS}</li>
+     * </ul>
+     */
+    private void tryTriggerAiPolish(Long candidateId,
+                                   List<Job> candidates,
+                                   Long industryId,
+                                   Long cityId,
+                                   String province,
+                                   List<String> tokens) {
+        if (candidateId == null || candidates == null || candidates.isEmpty()) return;
+        if (candidates.size() > AI_RERANK_MAX_JOBS) return;
+
+        boolean pending = Boolean.TRUE.equals(recommendPendingFlag.get(candidateId));
+        boolean firstVisitNoCache = !recommendScoresCache.containsKey(candidateId);
+        if (!pending && !firstVisitNoCache) return;
+
+        // 读 ACTIVE 简历（无则 abort）
+        ResumeDto resume = null;
+        try {
+            resume = resumeService.getCurrentActive(candidateId);
+        } catch (Exception e) {
+            log.warn("[JobServiceImpl] 读简历失败 candidateId={}: {}", candidateId, e.getMessage());
+        }
+        if (resume == null || Boolean.TRUE.equals(resume.getArchived())) {
+            return;
+        }
+
+        // 清 flag（仅 firstVisit 不清；下次按缓存命中走）
+        if (pending) {
+            recommendPendingFlag.put(candidateId, false);
+        }
+
+        // 切片：宽筛前 pageSize 条（防止 LLM 处理太多）
+        int limit = Math.min(candidates.size(), AI_RERANK_MAX_JOBS);
+        List<Job> top = new ArrayList<>(candidates.subList(0, limit));
+
+        // 转换 Job → Markdown 列表
+        String jobsContent = formatJobsForPrompt(top);
+        String resumeJson;
+        try {
+            resumeJson = objectMapper.writeValueAsString(resume);
+        } catch (JsonProcessingException e) {
+            log.warn("[JobServiceImpl] 简历序列化失败 candidateId={}", candidateId);
+            return;
+        }
+
+        // 偏好字段（按行业 id 取名）
+        String industryName = null;
+        if (industryId != null) {
+            DictIndustry ind = industryMapper.selectById(industryId);
+            if (ind != null) industryName = ind.getName();
+        }
+        String cityName = null;
+        if (cityId != null) {
+            DictCity city = cityMapper.selectById(cityId);
+            if (city != null) cityName = city.getName();
+        }
+        String positionText = tokens.isEmpty() ? null : String.join(" ", tokens);
+
+        recommendAsyncPolish(candidateId, top, resumeJson,
+                positionText, industryName, province, cityName);
+    }
+
+    /**
+     * 把职位列表格式化成 Markdown 行喂给 LLM（jobId / title / cityName / keywords）。
+     */
+    private String formatJobsForPrompt(List<Job> jobs) {
+        StringBuilder sb = new StringBuilder();
+        for (Job j : jobs) {
+            String cityName = "（未知城市）";
+            if (j.getCityId() != null) {
+                DictCity c = cityMapper.selectById(j.getCityId());
+                if (c != null) cityName = c.getName();
+            }
+            String title = j.getTitle() == null ? "" : j.getTitle();
+            String keywords = j.getKeywords() == null ? "" : j.getKeywords();
+            sb.append("- jobId=").append(j.getId())
+                    .append(", title=").append(title)
+                    .append(", city=").append(cityName)
+                    .append(", keywords=").append(keywords)
+                    .append('\n');
+        }
+        return sb.toString();
+    }
+
+    /**
+     * v0.7.3：异步调 LLM 给推荐职位打分，写缓存 + SSE 推送给前端。
+     *
+     * <p>调用方 {@link #tryTriggerAiPolish} 已确保有 ACTIVE 简历 + 候选数 ≤ 10。</p>
+     */
+    @Async("taskExecutor")
+    public void recommendAsyncPolish(Long candidateId,
+                                    List<Job> jobs,
+                                    String resumeJson,
+                                    String positionText,
+                                    String industryName,
+                                    String province,
+                                    String cityName) {
+        if (candidateId == null || jobs == null || jobs.isEmpty()) return;
+        String jobsContent = formatJobsForPrompt(jobs);
+        Map<Long, Integer> scores = recommendService.rank(
+                String.valueOf(candidateId),
+                resumeJson, positionText, industryName, province, cityName,
+                jobsContent);
+        if (scores == null || scores.isEmpty()) {
+            log.info("[JobServiceImpl] AI 重排未返回分数 candidateId={}", candidateId);
+            return;
+        }
+
+        // 写缓存：覆盖 userId 整条（避免新旧分数混淆）
+        ConcurrentHashMap<Long, Integer> userCache = new ConcurrentHashMap<>(scores);
+        recommendScoresCache.put(candidateId, userCache);
+
+        // SSE 推送（异步；前端 EventSource 收到 recommendation_ready 后重新拉推荐即可拿到新分数）
+        try {
+            Map<String, Object> payload = new HashMap<>();
+            payload.put("scores", scores);
+            payload.put("jobsCount", jobs.size());
+            sseManager.pushToUser(candidateId, "recommendation_ready", payload);
+            log.info("[JobServiceImpl] AI 重排完成 candidateId={} scored={}", candidateId, scores.size());
+        } catch (Exception e) {
+            log.warn("[JobServiceImpl] SSE 推送失败 candidateId={}: {}", candidateId, e.getMessage());
+        }
+    }
+
+    /**
+     * v0.7.3：外部（ProfileServiceImpl）写入待重排 flag。
+     * 用户更新简历 / 偏好时调用，下次 recommendOnResume 触发 AI。
+     */
+    public static void markRecommendPending(Long userId) {
+        if (userId != null) recommendPendingFlag.put(userId, true);
     }
 
     /**
@@ -393,6 +610,19 @@ public class JobServiceImpl implements JobService {
         java.util.Set<Long> favSet = new java.util.HashSet<>(favIds);
         for (JobDto dto : dtos.getRecords()) {
             dto.setFavorited(favSet.contains(dto.getId()));
+        }
+    }
+
+    /**
+     * v0.7.3：从 {@link #recommendScoresCache} 注入 AI 智能匹配度。无缓存则 aiScore 保持 null。
+     */
+    private void fillAiScore(IPage<JobDto> dtos, Long candidateId) {
+        if (candidateId == null || dtos.getRecords() == null || dtos.getRecords().isEmpty()) return;
+        ConcurrentHashMap<Long, Integer> userCache = recommendScoresCache.get(candidateId);
+        if (userCache == null || userCache.isEmpty()) return;
+        for (JobDto dto : dtos.getRecords()) {
+            Integer score = userCache.get(dto.getId());
+            if (score != null) dto.setAiScore(score);
         }
     }
 

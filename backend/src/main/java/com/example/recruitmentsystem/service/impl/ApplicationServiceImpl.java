@@ -168,8 +168,13 @@ public class ApplicationServiceImpl implements ApplicationService {
         validateCandidate(candidateId);
         Page<Application> page = new Page<>(pageNum, pageSize);
         LambdaQueryWrapper<Application> q = new LambdaQueryWrapper<>();
+        // v0.7.4.5：不再过滤 VIEWED_BY_HR — 但凡用户投过简历都应显示在「我的投递」中。
+        // 历史：设计文档 §4.3.6 要求隐藏 VIEWED_BY_HR（等同"处理中"），但实际产生 UX 死胡同：
+        //   - HR 把状态从 PENDING_REVIEW 推进到 VIEWED_BY_HR 后，候选人侧列表突然少一条
+        //   - 候选人无法再次投递同一职位（防重逻辑）→ 永远看不到该投递
+        //   - 候选人无法跟踪"HR 已读但未决"的进度
+        // 现在 VIEWED_BY_HR 在前端以"已查看"tag 展示，与 PENDING_REVIEW 区分但不隐藏。
         q.eq(Application::getCandidateId, candidateId)
-                .ne(Application::getStatus, STATUS_VIEWED_BY_HR)  // 候选人侧隐藏 VIEWED_BY_HR
                 .orderByDesc(Application::getAppliedAt);
         IPage<Application> raw = applicationMapper.selectPage(page, q);
         return raw.convert(this::toDtoForCandidate);

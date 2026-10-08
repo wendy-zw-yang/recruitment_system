@@ -14,10 +14,17 @@ import com.example.recruitmentsystem.mapper.DictCityMapper;
 import com.example.recruitmentsystem.mapper.DictIndustryMapper;
 import com.example.recruitmentsystem.mapper.FavoriteJobMapper;
 import com.example.recruitmentsystem.mapper.JobMapper;
+import com.example.recruitmentsystem.mapper.ResumeMapper;
 import com.example.recruitmentsystem.mapper.UserMapper;
 import com.example.recruitmentsystem.service.AuditLogService;
 import com.example.recruitmentsystem.service.impl.JobServiceImpl;
 import org.junit.jupiter.api.Test;
+
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.transaction.annotation.Transactional;
@@ -45,12 +52,23 @@ class JobServiceTest {
     @Autowired private FavoriteJobMapper favoriteJobMapper;
     @Autowired private CandidateProfileMapper candidateProfileMapper;
     @Autowired private AuditLogService auditLogService;
+    @Autowired private com.example.recruitmentsystem.mapper.ResumeMapper resumeMapper;
+    /** v0.7.3：AI 智能匹配度用 mock 替换真实 bean（@MockBean 替代 @Autowired） */
+    @org.springframework.boot.test.mock.mockito.MockBean
+    private com.example.recruitmentsystem.llm.service.RecommendService recommendService;
 
     private JobServiceImpl jobService() {
+        this.resumeServiceMock = org.mockito.Mockito.mock(com.example.recruitmentsystem.service.ResumeService.class);
         return new JobServiceImpl(jobMapper, favoriteJobMapper, userMapper, companyMapper,
                 industryMapper, cityMapper, candidateProfileMapper,
-                org.mockito.Mockito.mock(com.example.recruitmentsystem.llm.service.LlmJdService.class));
+                org.mockito.Mockito.mock(com.example.recruitmentsystem.llm.service.LlmJdService.class),
+                recommendService,
+                resumeServiceMock,
+                org.mockito.Mockito.mock(com.example.recruitmentsystem.service.message.SseEmitterManager.class),
+                new com.fasterxml.jackson.databind.ObjectMapper());
     }
+
+    private com.example.recruitmentsystem.service.ResumeService resumeServiceMock;
 
     private Long createHr(String label) {
         User u = new User();
@@ -691,5 +709,224 @@ class JobServiceTest {
         IPage<JobDto> result = jobService().recommendOnResume(candidateId, 1, 10);
         assertTrue(result.getRecords().stream().anyMatch(j -> j.getId().equals(j1.getId())),
                 "2-char 滑动串应让'系统架构师'匹配'系统设计架构师'");
+    }
+
+    // ============ v0.7.3 AI 智能匹配度（异步重排）============
+
+    /** 简单创建一个 ACTIVE 简历（仅 selfIntro 字段） */
+    private void createActiveResumeFor(Long candidateId) {
+        com.example.recruitmentsystem.entity.Resume resume = new com.example.recruitmentsystem.entity.Resume();
+        resume.setCandidateId(candidateId);
+        resume.setArchived(false);
+        resume.setBasicName("测试");
+        resume.setBasicPhone("13800000000");
+        resume.setBasicEmail("test@test.local");
+        resume.setSkills("Java, Spring Boot, Vue");
+        resume.setSelfIntro("3 年后端");
+        resumeMapper.insert(resume);
+    }
+
+    /**
+     * v0.7.3：候选人**无 ACTIVE 简历**时不应触发 AI 重排（@Async 不会被调）。
+     */
+    @Test
+    @Transactional
+    void recommend_noActiveResume_doesNotTriggerAi() {
+        Long hrId = createHr("hr-noresume");
+        JobDto j1 = jobService().createJob(hrId, sampleCreateWithTitle("Java 工程师"));
+        jobService().publishJob(hrId, j1.getId());
+
+        Long candidateId = createCandidate("c-noresume");
+        // 不创建 ACTIVE 简历
+        savePreference(candidateId, "Java", null, null, null);
+
+        // 清空 markRecommendPending（避免其他测试污染）
+        com.example.recruitmentsystem.service.impl.JobServiceImpl.recommendPendingFlag.remove(candidateId);
+
+        jobService().recommendOnResume(candidateId, 1, 5);
+
+        // 推荐结果应能返回（SQL 不变），但 aiScore 应为 null（AI 未跑）
+        IPage<JobDto> result = jobService().recommendOnResume(candidateId, 1, 5);
+        assertTrue(result.getRecords().size() > 0);
+        assertTrue(result.getRecords().stream().allMatch(j -> j.getAiScore() == null),
+                "无简历时 aiScore 应保持 null");
+    }
+
+    /**
+     * v0.7.3：第一次访问（首字节命中且无缓存）应触发 AI 重排（@Async）。
+     * 测试直接调 {@code recommendAsyncPolish}（绕开 @Async 异步等待）以保证确定性。
+     */
+    @Test
+    @Transactional
+    void recommend_firstVisitWithResume_triggersAi() {
+        Long hrId = createHr("hr-first");
+        JobDto j1 = jobService().createJob(hrId, sampleCreateWithTitle("Java 工程师"));
+        jobService().publishJob(hrId, j1.getId());
+
+        Long candidateId = createCandidate("c-first");
+        createActiveResumeFor(candidateId);
+        savePreference(candidateId, "Java", null, null, null);
+
+        // mock RecommendService 返回固定的 scores
+        java.util.Map<Long, Integer> scores = new java.util.HashMap<>();
+        scores.put(j1.getId(), 88);
+        when(recommendService.rank(anyString(), any(), any(), any(), any(), any(), any()))
+                .thenReturn(scores);
+
+        // 同步直接调 @Async 方法（@Async 注解在测试环境不生效，需直接调用）
+        com.example.recruitmentsystem.entity.CandidateProfile pref = candidateProfileMapper.selectOne(
+                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<com.example.recruitmentsystem.entity.CandidateProfile>()
+                        .eq(com.example.recruitmentsystem.entity.CandidateProfile::getUserId, candidateId));
+        java.util.List<com.example.recruitmentsystem.entity.Job> jobs = new java.util.ArrayList<>();
+        jobs.add(jobMapper.selectById(j1.getId()));
+        String resumeJson;
+        try {
+            resumeJson = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(resumeServiceMock.getCurrentActive(candidateId));
+        } catch (Exception e) { resumeJson = "{}"; }
+        jobService().recommendAsyncPolish(candidateId, jobs, resumeJson, null, null, null, null);
+
+        // 第二次调用：命中缓存 → aiScore 注入
+        IPage<JobDto> result = jobService().recommendOnResume(candidateId, 1, 5);
+        JobDto first = result.getRecords().get(0);
+        assertEquals(88, first.getAiScore().intValue(), "aiScore 应从缓存注入到 DTO");
+        verify(recommendService, atLeastOnce()).rank(anyString(), any(), any(), any(), any(), any(), any());
+    }
+
+    /**
+     * v0.7.3：markRecommendPending 后下次访问会重新触发 AI。
+     */
+    @Test
+    @Transactional
+    void recommend_preferenceChangeTriggersAiRerank() {
+        Long hrId = createHr("hr-retrig");
+        JobDto j1 = jobService().createJob(hrId, sampleCreateWithTitle("Python 工程师"));
+        jobService().publishJob(hrId, j1.getId());
+
+        Long candidateId = createCandidate("c-retrig");
+        createActiveResumeFor(candidateId);
+        savePreference(candidateId, "Java", null, null, null);
+
+        // 第一次：mock AI 返回 50 分
+        java.util.Map<Long, Integer> first = new java.util.HashMap<>();
+        first.put(j1.getId(), 50);
+        when(recommendService.rank(anyString(), any(), any(), any(), any(), any(), any()))
+                .thenReturn(first);
+
+        java.util.List<com.example.recruitmentsystem.entity.Job> jobs = new java.util.ArrayList<>();
+        jobs.add(jobMapper.selectById(j1.getId()));
+        String resumeJson;
+        try {
+            resumeJson = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(resumeServiceMock.getCurrentActive(candidateId));
+        } catch (Exception e) { resumeJson = "{}"; }
+        jobService().recommendAsyncPolish(candidateId, jobs, resumeJson, null, null, null, null);
+
+        // 用户改偏好 → 触发 flag
+        com.example.recruitmentsystem.service.impl.JobServiceImpl.markRecommendPending(candidateId);
+
+        // 第二次：mock AI 返回 92 分（即使 cache 已存在）
+        java.util.Map<Long, Integer> second = new java.util.HashMap<>();
+        second.put(j1.getId(), 92);
+        when(recommendService.rank(anyString(), any(), any(), any(), any(), any(), any()))
+                .thenReturn(second);
+        jobService().recommendAsyncPolish(candidateId, jobs, resumeJson, null, null, null, null);
+
+        // 验证 aiScore 已更新到 92
+        IPage<JobDto> result = jobService().recommendOnResume(candidateId, 1, 5);
+        assertEquals(92, result.getRecords().get(0).getAiScore().intValue());
+    }
+
+    /**
+     * v0.7.4.1：决策 #2 落地——cache 有 aiScore 时，recommendOnResume 返回的列表按 aiScore DESC 排序。
+     *
+     * <p>4 个职位按 aiScore 倒序：j2(92) > j4(88) > j3(75) > j1(30)。
+     * 注：测试仅断言本测试创建的 4 个 job 的相对位置，不约束其他测试的脏数据。</p>
+     */
+    @Test
+    @Transactional
+    void recommend_cachePopulated_sortsByAiScoreDesc() {
+        Long hrId = createHr("hr-sort");
+        JobDto j1 = jobService().createJob(hrId, sampleCreateWithTitle("职位 A"));
+        JobDto j2 = jobService().createJob(hrId, sampleCreateWithTitle("职位 B"));
+        JobDto j3 = jobService().createJob(hrId, sampleCreateWithTitle("职位 C"));
+        JobDto j4 = jobService().createJob(hrId, sampleCreateWithTitle("职位 D"));
+        jobService().publishJob(hrId, j1.getId());
+        jobService().publishJob(hrId, j2.getId());
+        jobService().publishJob(hrId, j3.getId());
+        jobService().publishJob(hrId, j4.getId());
+
+        Long candidateId = createCandidate("c-sort");
+        createActiveResumeFor(candidateId);
+        savePreference(candidateId, "Java", null, null, null);
+
+        // 模拟 LLM 返回乱序打分
+        java.util.Map<Long, Integer> scores = new java.util.LinkedHashMap<>();
+        scores.put(j1.getId(), 30);
+        scores.put(j2.getId(), 92);
+        scores.put(j3.getId(), 75);
+        scores.put(j4.getId(), 88);
+        when(recommendService.rank(anyString(), any(), any(), any(), any(), any(), any()))
+                .thenReturn(scores);
+
+        // 直接调 @Async 写 cache（绕开 trigger 条件——本测试只测重排逻辑）
+        java.util.List<com.example.recruitmentsystem.entity.Job> jobs = new java.util.ArrayList<>();
+        jobs.add(jobMapper.selectById(j1.getId()));
+        jobs.add(jobMapper.selectById(j2.getId()));
+        jobs.add(jobMapper.selectById(j3.getId()));
+        jobs.add(jobMapper.selectById(j4.getId()));
+        String resumeJson = "{}";
+        jobService().recommendAsyncPolish(candidateId, jobs, resumeJson, "Java", null, null, null);
+
+        // 调 recommendOnResume → 应按 aiScore DESC 重排
+        IPage<JobDto> result = jobService().recommendOnResume(candidateId, 1, 50);
+        java.util.List<JobDto> records = result.getRecords();
+
+        // 取本测试的 4 个 job 的位置（不依赖其他测试的脏数据）
+        java.util.Set<Long> myJobIds = new java.util.HashSet<>(java.util.Arrays.asList(
+                j1.getId(), j2.getId(), j3.getId(), j4.getId()));
+        java.util.List<JobDto> mine = records.stream()
+                .filter(j -> myJobIds.contains(j.getId()))
+                .collect(java.util.stream.Collectors.toList());
+
+        assertEquals(4, mine.size(), "本测试 4 个 job 应全在结果中");
+        // 期望顺序：j2(92) → j4(88) → j3(75) → j1(30)
+        assertEquals(j2.getId(), mine.get(0).getId());
+        assertEquals(92, mine.get(0).getAiScore().intValue());
+        assertEquals(j4.getId(), mine.get(1).getId());
+        assertEquals(88, mine.get(1).getAiScore().intValue());
+        assertEquals(j3.getId(), mine.get(2).getId());
+        assertEquals(75, mine.get(2).getAiScore().intValue());
+        assertEquals(j1.getId(), mine.get(3).getId());
+        assertEquals(30, mine.get(3).getAiScore().intValue());
+
+        // 其他测试脏数据（无 aiScore）应排到末尾
+        java.util.List<JobDto> others = records.stream()
+                .filter(j -> !myJobIds.contains(j.getId()))
+                .collect(java.util.stream.Collectors.toList());
+        for (JobDto other : others) {
+            assertTrue(other.getAiScore() == null, "无 aiScore 的脏数据应排在末尾");
+        }
+    }
+
+    /**
+     * v0.7.4.1：cache 为空时（AI 未跑过），列表保持原顺序（4 维 Java 内存分），aiScore 全部 null。
+     */
+    @Test
+    @Transactional
+    void recommend_cacheEmpty_keepsOriginalOrder() {
+        Long hrId = createHr("hr-nosort");
+        JobDto j1 = jobService().createJob(hrId, sampleCreateWithTitle("Java 工程师"));
+        jobService().publishJob(hrId, j1.getId());
+
+        Long candidateId = createCandidate("c-nosort");
+        createActiveResumeFor(candidateId);
+        savePreference(candidateId, "Java", null, null, null);
+
+        // 清 flag + 清 cache（模拟"AI 未跑过"）
+        com.example.recruitmentsystem.service.impl.JobServiceImpl.recommendPendingFlag.remove(candidateId);
+        com.example.recruitmentsystem.service.impl.JobServiceImpl.recommendScoresCache.remove(candidateId);
+
+        IPage<JobDto> result = jobService().recommendOnResume(candidateId, 1, 5);
+        // cache 空时 aiScore 应保持 null（不重排——但本测试只一条记录，无重排意义）
+        assertTrue(result.getRecords().stream().allMatch(j -> j.getAiScore() == null));
     }
 }

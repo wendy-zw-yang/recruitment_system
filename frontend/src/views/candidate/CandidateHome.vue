@@ -1,14 +1,17 @@
 <script setup>
 import { onMounted, ref, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
 import { useApplicationStore } from '@/stores/useApplicationStore'
 import { jobApi } from '@/api/job'
 import { profileApi } from '@/api/profile'
+import { useRecommendStore } from '@/stores/useRecommendStore'
 import JobListCard from '@/views/common/JobListCard.vue'
 
 const router = useRouter()
 const route = useRoute()
 const applicationStore = useApplicationStore()
+const recommendStore = useRecommendStore()
 
 const searchKeyword = ref('')
 const searchLocation = ref('')
@@ -111,6 +114,8 @@ function goJobDetail(job) {
 
 const STATUS_LABEL = {
   PENDING_REVIEW: '待 HR 查看',
+  // v0.7.4.5：补全 VIEWED_BY_HR（首页"我的投递"section 也读这个 map）
+  VIEWED_BY_HR:   '已查看',
   RESUME_PASSED: '简历通过',
   INTERVIEWING: '面试中',
   OFFERED: '已发 Offer',
@@ -160,6 +165,53 @@ watch(
     if (newPath === '/home') refreshData()
   }
 )
+
+/**
+ * v0.7.4.1：监听 AI 推荐打分完成事件。后端异步完成后通过 SSE 推
+ * {@code recommendation_ready} 事件 → recommendStore.lastEvent 变化 → 原地更新卡片 + 重排。
+ *
+ * <p>关键决策：**不**调用 {@code loadRecommended()}（避免"加载中…"闪屏打断阅读）；
+ * 改为原地更新每张卡片的 aiScore + 整个数组按 aiScore DESC 重排，让 Vue 响应式触发 v-for 重排。</p>
+ */
+watch(
+  () => recommendStore.lastEvent,
+  (event) => {
+    if (!event || route.path !== '/home') return
+    const scores = recommendStore.consumeLatestScores()
+    const scoreEntries = Object.entries(scores)
+    if (scoreEntries.length === 0) return
+
+    // 1. 原地更新每张卡片的 aiScore（Vue 响应式 → JobListCard 标签刷新）
+    const list = recommendedJobs.value
+    const scoreMap = new Map(scoreEntries.map(([k, v]) => [Number(k), v]))
+    let changed = false
+    for (const job of list) {
+      const newScore = scoreMap.get(job.id)
+      if (newScore != null && job.aiScore !== newScore) {
+        job.aiScore = newScore
+        changed = true
+      }
+    }
+
+    // 2. 按 aiScore DESC 重新排序（高分优先；null 排最后）
+    if (changed) {
+      const sorted = [...list].sort((a, b) => {
+        if (a.aiScore == null && b.aiScore == null) return 0
+        if (a.aiScore == null) return 1
+        if (b.aiScore == null) return -1
+        return b.aiScore - a.aiScore
+      })
+      recommendedJobs.value = sorted   // 整个数组替换 → 触发 v-for 重排
+    }
+
+    // 3. 弹 toast（仅高分有标签时显示最高分）
+    const maxScore = Math.max(...Object.values(scores).map((v) => v || 0))
+    ElMessage.success(
+      `AI 已完成智能匹配（最高分 ${maxScore}），已按分数重排`
+    )
+    // 不调用 loadRecommended() → 不显示"加载中…"
+  }
+)
 </script>
 
 <template>
@@ -204,7 +256,7 @@ watch(
           <h2>推荐职位</h2>
           <span class="hint">按你的偏好智能筛选 · 来自 HR 发布</span>
         </div>
-        <el-button text type="primary" @click="router.push('/jobs')">查看更多 →</el-button>
+        <el-button text type="primary" @click="router.push({ path: '/jobs', query: { recommended: 'true' } })">查看更多 →</el-button>
       </div>
 
       <div v-if="jobsLoading" class="loading">加载中…</div>
@@ -233,6 +285,7 @@ watch(
               :key="job.id"
               :job="job"
               :show-actions="false"
+              :ai-score="job.aiScore"
               @detail="goJobDetail"
             />
           </div>
@@ -252,6 +305,7 @@ watch(
             :key="job.id"
             :job="job"
             :show-actions="false"
+            :ai-score="job.aiScore"
             @detail="goJobDetail"
           />
         </div>

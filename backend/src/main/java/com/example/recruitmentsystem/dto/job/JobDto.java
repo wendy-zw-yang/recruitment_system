@@ -37,6 +37,8 @@ public class JobDto {
     private LocalDateTime updatedAt;
     /** 是否已被当前候选人收藏（仅候选人端列表需要） */
     private Boolean favorited;
+    /** v0.7.3：AI 智能匹配度（0-100，仅推荐列表有；nullable：未触发 AI 或无简历时为 null） */
+    private Integer aiScore;
 
     public static JobDto from(Job j) {
         JobDto dto = new JobDto();

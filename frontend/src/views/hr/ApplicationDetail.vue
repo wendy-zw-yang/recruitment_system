@@ -25,7 +25,8 @@ const STATUS_LABEL = {
 }
 const STATUS_TYPE = {
   PENDING_REVIEW: 'info',
-  VIEWED_BY_HR: '',
+  // v0.7.4.5：空字符串 '' 改为 'info'，避免 el-tag type 渲染异常
+  VIEWED_BY_HR: 'info',
   RESUME_PASSED: 'primary',
   INTERVIEWING: 'warning',
   OFFERED: 'success',
@@ -251,7 +252,7 @@ function fmtDateTime(dt) {
             </div>
             <div v-else class="ai-block ai-block--pending">
               <div class="ai-score ai-score--pending">—</div>
-              <p class="ai-reason">AI 评分中，约 5-15 秒完成；可稍后刷新查看</p>
+              <p class="ai-reason">AI 尚在评估中</p>
             </div>
           </div>
 
