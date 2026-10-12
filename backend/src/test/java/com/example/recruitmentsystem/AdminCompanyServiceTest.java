@@ -10,6 +10,7 @@ import com.example.recruitmentsystem.entity.Company;
 import com.example.recruitmentsystem.entity.User;
 import com.example.recruitmentsystem.mapper.AuditLogMapper;
 import com.example.recruitmentsystem.mapper.CompanyMapper;
+import com.example.recruitmentsystem.mapper.DictIndustryMapper;
 import com.example.recruitmentsystem.mapper.UserMapper;
 import com.example.recruitmentsystem.service.AdminCompanyService;
 import com.example.recruitmentsystem.service.AuditLogService;
@@ -35,6 +36,7 @@ class AdminCompanyServiceTest {
     @Autowired private CompanyMapper companyMapper;
     @Autowired private AuditLogMapper auditLogMapper;
     @Autowired private AuditLogService auditLogService;
+    @Autowired private DictIndustryMapper industryMapper;
 
     private Long adminId;
 
@@ -51,7 +53,10 @@ class AdminCompanyServiceTest {
     }
 
     private AdminCompanyService service() {
-        return new AdminCompanyServiceImpl(companyMapper, userMapper, null, auditLogService);
+        // 4 个依赖顺序与 AdminCompanyServiceImpl @RequiredArgsConstructor 一致：
+        // companyMapper / userMapper / industryMapper / auditLogService
+        // v0.7.4.6 修复：之前第 3 个参数传 null，industryMapper 字段加进来后导致 NPE
+        return new AdminCompanyServiceImpl(companyMapper, userMapper, industryMapper, auditLogService);
     }
 
     private Long createHrWithCompany(String authStatus) {

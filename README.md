@@ -1,9 +1,7 @@
 ﻿# 汇聘 · AI 集成的智能招聘系统
 
-> **项目代号**：汇聘（RecruitmentSystem） 
+> **项目名称**：AI 集成的智能招聘系统（RecruitmentSystem）
 > **课程**：计算机项目综合开发创新实践  
-> **当前版本**：v0.7.1（2026-10-06）  
-> **文档版本**：v1.0  
 > **编制日期**：2026-10-06  
 
 一个面向求职者 / HR / 管理员三方的智能招聘系统，覆盖简历管理、职位发布、投递跟踪、AI 评分、AI 客服、消息中心等完整招聘流程。后端基于 Spring Boot 3.5 + MyBatis-Plus 3.5，前端基于 Vue 3 + Element Plus，AI 集成 OpenAI 兼容协议（MiniMax）。
@@ -26,11 +24,11 @@
 
 ### 1.3 核心特性
 
-- **AI 全链路集成**：简历解析（AI-1）、JD 润色（AI-3）、简历 ↔ JD 评分（AI-2）、智能客服（AI-4）四大必做功能齐备
+- **AI 全链路集成**：简历解析（AI-1）、JD 润色（AI-3）、简历 -JD 评分（AI-2）、智能客服（AI-4）四大必做功能齐备
 - **完整状态机**：8 状态投递跟踪（`PENDING_REVIEW → VIEWED_BY_HR → RESUME_PASSED → INTERVIEWING → OFFERED → HIRED` 或 `REJECTED` / `WITHDRAWN`）
-- **站内信（消息中心）**：HR ↔ 候选人二元组唯一会话 + SSE 实时推送 + 撤回通知系统消息
+- **站内信（消息中心）**：HR-候选人二元组唯一会话 + SSE 实时推送 + 撤回通知系统消息
 - **三端 UI 完整**：候选人 / HR / 管理员首页、详情、表单、列表全实现
-- **182 个单元测试**：核心业务 100% 覆盖
+- **204 个单元测试**：核心业务 100% 覆盖
 
 ---
 
@@ -137,7 +135,7 @@ RecruitmentSystem/
 │       │   └── resources/
 │       │       ├── application.yml       # 主配置（提交）
 │       │       └── ai/manual.md          # AI-4 客服检索手册
-│       └── test/                         # 182 个 JUnit 5 测试
+│       └── test/                         # 204 个 JUnit 5 测试
 ├── frontend/                             # Vue 3 工程
 │   ├── package.json
 │   ├── vite.config.js                    # /api → http://localhost:8080 代理
@@ -155,13 +153,13 @@ RecruitmentSystem/
 │           └── common/                   # 通用（Profile / Chat / ChatListItem / NotFound / Forbidden / JobListCard）
 ├── docs/                                 # 项目文档
 │   ├── AGENTS.md                         # AI 协作规范
-│   ├── 技术约束.md                       # 唯一权威技术栈
-│   ├── 需求分析/                         # 功能性 / 非功能性需求
-│   ├── 系统设计/                         # 功能模块设计 + 详细设计（§1-§8）+ WBS + 用例图
+│   ├── 技术约束.md                        # 唯一权威技术栈
+│   ├── 需求分析/                          # 功能性 / 非功能性需求
+│   ├── 系统设计/                          # 功能模块设计 + 详细设计（§1-§8）+ WBS + 用例图
 │   ├── DataBase/
 │   │   ├── schema.sql                    # 20 张表 DDL（**权威**）
-│   │   ├── 数据库设计.md
-│   │   └── migration-2026-10-06-add-ai-chat-message.sql  # 增量迁移
+│   │   ├── seed.sql                      # 增加测试数据和新增字段
+│   │   └── 数据库设计.md
 │   ├── dev-logs/                         # 每日开发日志（AGENTS.md §6 强制要求）
 │   ├── 使用手册.md                       # 30+ 条用户视角 FAQ
 │   └── 阶段性文档/                        # 阶段性模板
@@ -455,12 +453,12 @@ server: {
 
 ```bash
 cd backend
-mvn test                          # 全部 182 个测试
+mvn test                          # 全部 204 个测试
 mvn test -Dtest=MessageServiceTest # 单个测试类
 mvn test -Dtest='MessageServiceTest#sendMessage_hrSends_persistsAndPushesBothSides' # 单个用例
 ```
 
-**当前状态**：182 / 182 通过
+**当前状态**：204 / 204 通过
 
 | 测试类 | 用例数 | 覆盖范围 |
 |---|---|---|
@@ -493,68 +491,3 @@ npm run build    # 0 新增警告（chunk size 警告是已有的）
 ```
 
 ---
-
-## 10. 文档索引
-
-| 类别 | 路径 | 用途 |
-|---|---|---|
-| **AI 协作规范** | [`AGENTS.md`](./AGENTS.md) | **必读**（含不启动后端集成测试 / dev-log 单日仅追加 / 不自动 commit 等规则） |
-| **技术约束** | [`docs/技术约束.md`](./docs/技术约束.md) | 唯一权威技术栈与 DDL 约定 |
-| **需求分析** | [`docs/需求分析/`](./docs/需求分析) | 功能性 + 非功能性需求 |
-| **系统设计** | [`docs/系统设计/`](./docs/系统设计) | 功能模块设计（master）+ 各模块详细设计 + WBS + 用例图 |
-| **数据库** | [`docs/DataBase/schema.sql`](./docs/DataBase/schema.sql) | 20 张表 DDL（权威） |
-| **开发日志** | [`docs/dev-logs/`](./docs/dev-logs) | 每日工作日志（按 AGENTS.md §6 强制） |
-| **使用手册** | [`docs/使用手册.md`](./docs/使用手册.md) | 30+ 条用户视角 FAQ |
-| **AI handoff** | `opencode-handoff-*.md` | AI 会话交接文档（多份，按时间倒序） |
-
-### 关键模块设计文档
-
-| 模块 | 文档 |
-|---|---|
-| §1 用户与认证 | [`docs/系统设计/详细设计/用户与认证.md`](./docs/系统设计/详细设计/用户与认证.md) |
-| §2 简历 | [`docs/系统设计/详细设计/简历.md`](./docs/系统设计/详细设计/简历.md) |
-| §3 职位与公司 | [`docs/系统设计/详细设计/职位与公司.md`](./docs/系统设计/详细设计/职位与公司.md) |
-| §4 投递 | [`docs/系统设计/详细设计/投递.md`](./docs/系统设计/详细设计/投递.md) |
-| §5 消息中心 | [`docs/系统设计/详细设计/消息中心.md`](./docs/系统设计/详细设计/消息中心.md) |
-| §6 AI 集成 | [`docs/系统设计/详细设计/AI集成.md`](./docs/系统设计/详细设计/AI集成.md) |
-| §7 管理员 | [`docs/系统设计/详细设计/管理员.md`](./docs/系统设计/详细设计/管理员.md) |
-| §8 基础设施 | [`docs/系统设计/详细设计/基础设施.md`](./docs/系统设计/详细设计/基础设施.md) |
-
----
-
-## 11. 开发规范
-
-### 11.1 AI 协作（参见 [`AGENTS.md`](./AGENTS.md)）
-
-- 写代码前必读相关模块的 `docs/` 设计文档
-- 写代码后追加 `docs/dev-logs/YYYY-MM-DD.md`，文末署名 `<AI 名称> @ <ISO 时间>`
-- 单日 dev-log 文件**仅追加**不覆盖，历史日志不动
-- 不自动 `git commit` / `push`（需用户明示）
-- 不主动启动整个 Spring Boot 应用做集成测试（按 AGENTS.md v1.2）
-- 不在源代码写 "TODO" / "FIXME" / "AI generated" 等水印
-
-### 11.2 后端
-
-- SQL 优先 ORM（MyBatis-Plus Lambda），复杂查询可用 `@Select` 注解 + 参数化绑定
-- Controller → Service → Mapper 分层，禁止 Controller 直调 Mapper
-- 跨模块 service 调用避免循环依赖；确需共享时抽取公共 service
-- 多表写入 / 状态变更用 `@Transactional`；单表简单写入可省
-- 异常统一用 `BusinessException` 包装，禁止吞异常
-
-### 11.3 前端
-
-- Vue 3 Composition API + `<script setup>`，禁止 Options API
-- Pinia 状态管理，按模块拆分 store
-- API 封装在 `src/api/`，axios 拦截器已统一 Result 解包
-- 路由表 `src/router/index.js` 含 `meta.roles` 鉴权
-- 颜色 / 间距走 CSS 变量（`--primary` / `--text` / `--line` 等），禁止硬编码
-
-### 11.4 数据库
-
-- 每张业务表加 `is_deleted` 软删字段 + `@TableLogic`
-- 索引命名：`uk_` / `idx_` / `fk_`
-- 所有字段写 `COMMENT`
-
----
-
-> **最后编辑**：Opencode @ 2026-10-06T17:45:00+08:00

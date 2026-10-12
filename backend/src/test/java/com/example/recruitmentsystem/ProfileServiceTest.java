@@ -14,6 +14,8 @@ import com.example.recruitmentsystem.mapper.DictIndustryMapper;
 import com.example.recruitmentsystem.mapper.UserMapper;
 import com.example.recruitmentsystem.service.profile.ProfileService;
 import org.junit.jupiter.api.Test;
+
+import java.time.LocalDateTime;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.transaction.annotation.Transactional;
@@ -326,5 +328,107 @@ class ProfileServiceTest {
         // authStatus 仍为 PENDING（HR 不能改）
         CompanySelfDto after = profileService.getMyCompany(hrId);
         assertEquals("PENDING", after.getAuthStatus());
+    }
+
+    // ============ v0.7.4.6 回归：已 VERIFIED 的公司被 HR 修改 → 自动重置为 PENDING
+    //
+    // 背景：使用手册 §2.8 明确写"修改后公司进入待审核状态"，但原实现不重置 auth_status。
+    // 这导致 HR 可在「我的公司」编辑页改名（如把被驳回的"小作坊"改成"字节跳动"）后
+    // 立即生效、绕过管理员审核。
+    // 修复：检测到已 VERIFIED 公司被修改任意字段，自动重置为 PENDING，并清空历史审核信息。
+
+    private Long createCompanyWithStatus(Long hrUserId, String name, String status) {
+        Company c = new Company();
+        c.setHrUserId(hrUserId);
+        c.setName(name);
+        c.setAuthStatus(status);
+        if ("VERIFIED".equals(status)) {
+            c.setVerifiedAt(LocalDateTime.now());
+            // FK fk_company_verified_by → users.id：用 HR 自己的 id（保证存在），
+            // 实际生产环境是 admin.id，这里测试只关心 FK 不报
+            c.setVerifiedBy(hrUserId);
+        }
+        companyMapper.insert(c);
+        return c.getId();
+    }
+
+    @Test
+    @Transactional
+    void company_update_verifiedAnyFieldChanged_resetsToPending() {
+        Long hrId = createUser("p12-verified", "HR", "Password123");
+        createCompanyWithStatus(hrId, "原公司", "VERIFIED");
+
+        // 修改 name（HR 自填字段）
+        CompanySelfDto req = new CompanySelfDto();
+        req.setName("新公司名");
+        profileService.updateMyCompany(hrId, req);
+
+        // authStatus 必须自动重置为 PENDING
+        CompanySelfDto after = profileService.getMyCompany(hrId);
+        assertEquals("PENDING", after.getAuthStatus());
+        assertEquals("新公司名", after.getName());
+    }
+
+    @Test
+    @Transactional
+    void company_update_verifiedIndustryIdChanged_resetsToPending() {
+        Long hrId = createUser("p13-verified-ind", "HR", "Password123");
+        createCompanyWithStatus(hrId, "公司", "VERIFIED");
+
+        // 用真实存在的 dict_industry id（FK fk_company_industry）
+        Long realIndustryId = industryMapper.selectList(
+                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<com.example.recruitmentsystem.entity.DictIndustry>()
+                        .orderByAsc(com.example.recruitmentsystem.entity.DictIndustry::getSortOrder))
+                .get(0).getId();
+
+        CompanySelfDto req = new CompanySelfDto();
+        req.setIndustryId(realIndustryId);
+        profileService.updateMyCompany(hrId, req);
+
+        assertEquals("PENDING", profileService.getMyCompany(hrId).getAuthStatus());
+    }
+
+    @Test
+    @Transactional
+    void company_update_verifiedAllFieldsNull_keepsVerified() {
+        // HR 显式传全部 null（不修改任何字段）→ 不算修改，VERIFIED 保持
+        Long hrId = createUser("p14-verified-noop", "HR", "Password123");
+        createCompanyWithStatus(hrId, "公司", "VERIFIED");
+
+        CompanySelfDto req = new CompanySelfDto();
+        // 全 null
+        profileService.updateMyCompany(hrId, req);
+
+        assertEquals("VERIFIED", profileService.getMyCompany(hrId).getAuthStatus());
+    }
+
+    @Test
+    @Transactional
+    void company_update_pendingFieldChanged_keepsPending() {
+        Long hrId = createUser("p15-pending", "HR", "Password123");
+        createCompany(hrId, "PENDING 公司");
+
+        CompanySelfDto req = new CompanySelfDto();
+        req.setName("改名");
+        profileService.updateMyCompany(hrId, req);
+
+        assertEquals("PENDING", profileService.getMyCompany(hrId).getAuthStatus());
+    }
+
+    @Test
+    @Transactional
+    void company_update_rejectedFieldChanged_keepsRejected() {
+        // 重要：被驳回的公司修改后必须保持 REJECTED —— 否则 HR 可通过编辑绕过驳回决定
+        Long hrId = createUser("p16-rejected", "HR", "Password123");
+        createCompanyWithStatus(hrId, "小作坊", "REJECTED");
+
+        CompanySelfDto req = new CompanySelfDto();
+        req.setName("字节跳动");  // 试图通过改名绕过驳回
+        profileService.updateMyCompany(hrId, req);
+
+        CompanySelfDto after = profileService.getMyCompany(hrId);
+        assertEquals("REJECTED", after.getAuthStatus(),
+                "REJECTED 状态必须保持，否则 HR 可通过编辑绕过驳回");
+        assertEquals("字节跳动", after.getName());  // name 仍被允许修改（HR 应有改正错误后重新提交的机会）
     }
 }

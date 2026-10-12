@@ -52,7 +52,11 @@ const cityOptions = computed(() => {
  *  - 切换省份时清空城市下拉（保证省/市组合一致，不触发搜索）
  */
 watch(() => query.province, (newVal, oldVal) => {
-  if (newVal !== oldVal) query.cityId = null
+  if (newVal !== oldVal) {
+    query.cityId = null
+    // v0.7.4.6：切换省份时清空 cityName 文本框（避免省/市错配后端仍按旧 cityName 过滤）
+    query.cityName = ''
+  }
 })
 
 watch(() => query.favoritedOnly, (newVal, oldVal) => {

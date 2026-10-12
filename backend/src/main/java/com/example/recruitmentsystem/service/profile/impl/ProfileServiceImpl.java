@@ -181,6 +181,19 @@ public class ProfileServiceImpl implements ProfileService {
         if (req.getIndustryId() != null) c.setIndustryId(req.getIndustryId());
         if (req.getScale() != null) c.setScale(req.getScale().trim());
         if (req.getDescription() != null) c.setDescription(req.getDescription());
+        // v0.7.4.6：已 VERIFIED 的公司被 HR 修改任意字段 → 自动重置为 PENDING
+        // （符合《使用手册》§2.8"修改后公司进入待审核状态"，避免 HR 通过改名绕过审核）
+        // HR 显式传 null 视为"该字段不变"（与上面 if null 守卫语义一致），不算修改
+        boolean companyChanged = (req.getName() != null)
+                || (req.getIndustryId() != null)
+                || (req.getScale() != null)
+                || (req.getDescription() != null);
+        if (companyChanged && "VERIFIED".equals(c.getAuthStatus())) {
+            c.setAuthStatus("PENDING");
+            c.setVerifiedAt(null);
+            c.setVerifiedBy(null);
+            c.setAuthNote(null);
+        }
         // authStatus / authNote 不允许 HR 改（仅管理员审核可写）
         c.setUpdatedAt(now);
         if (c.getId() == null) {

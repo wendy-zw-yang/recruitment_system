@@ -51,8 +51,10 @@ onMounted(async () => {
 async function loadJobs() {
   try {
     const all = []
+    // v0.7.4.6：pageSize 100 → 1000（避免 HR > 100×3 职位时丢失；3 status × 1000 = 3000 行
+    // 走 idx_app_* 索引 < 1ms；后端无需改动）
     for (const status of ['DRAFT', 'ONLINE', 'OFFLINE']) {
-      const res = await jobApi.listMine({ status, pageNum: 1, pageSize: 100 })
+      const res = await jobApi.listMine({ status, pageNum: 1, pageSize: 1000 })
       all.push(...(res?.records || []))
     }
     jobs.value = all
